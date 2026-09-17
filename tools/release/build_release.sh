@@ -5,7 +5,9 @@ set -x
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 cd $DIR
 
-BUILD_DIR=/data/openpilot
+BUILD_DIR="${BUILD_DIR:-/data/openpilot}"
+PUBLISH_REMOTE="${PUBLISH_REMOTE:-origin}"
+RUN_ONROAD_TEST="${RUN_ONROAD_TEST:-1}"
 SOURCE_DIR="$(git rev-parse --show-toplevel)"
 
 export PYTHONPATH="$BUILD_DIR:$BUILD_DIR/msgq_repo:$BUILD_DIR/opendbc_repo:$BUILD_DIR/rednose_repo:$BUILD_DIR/teleoprtc_repo:$BUILD_DIR/tinygrad_repo"
@@ -45,7 +47,9 @@ cd $BUILD_DIR
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
   [ -d "$policy" ] || continue
   hardware_max="$(cat "$policy/cpuinfo_max_freq")"
-  echo "$hardware_max" | sudo tee "$policy/scaling_max_freq" >/dev/null
+  if ! echo "$hardware_max" | sudo tee "$policy/scaling_max_freq" >/dev/null; then
+    echo "warning: unable to set CPU max frequency for $policy; continuing"
+  fi
 done
 
 scons
@@ -95,9 +99,11 @@ VERSION=$(cat openpilot/sunnypilot/common/version.h | awk -F[\"-]  '{print $2}')
 git -c core.compression=0 add -f .
 git -c core.compression=0 -c gc.auto=0 commit -m "openpilot v$VERSION"
 
-# Run tests
+# Run tests. test_onroad deletes LOG_ROOT, so keep it disabled on the road car.
 cd $BUILD_DIR
-RELEASE=1 ./openpilot/selfdrive/test/test_onroad.py
+if [ "$RUN_ONROAD_TEST" = "1" ]; then
+  RELEASE=1 ./openpilot/selfdrive/test/test_onroad.py
+fi
 #tools/test_runner.py openpilot/selfdrive/car/tests/test_car_interfaces.py
 
 echo "[-] pushing release T=$SECONDS"
@@ -106,6 +112,6 @@ for branch in ${RELEASE_BRANCH//,/ }; do
   REFS+=("$BUILD_BRANCH:$branch")
 done
 # uploading the larger pack is faster than spending CPU to optimize it
-git -c pack.window=0 -c pack.depth=0 -c pack.compression=0 push -f origin "${REFS[@]}"
+git -c pack.window=0 -c pack.depth=0 -c pack.compression=0 push -f "$PUBLISH_REMOTE" "${REFS[@]}"
 
 echo "[-] done T=$SECONDS"
