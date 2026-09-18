@@ -87,8 +87,10 @@ find openpilot/third_party/ -name '*x86*' -exec rm -r {} +
 find openpilot/third_party/ -name '*Darwin*' -exec rm -r {} +
 
 
-# Restore third_party
-git checkout openpilot/third_party/
+# Restore third_party when this source revision carries it.
+if git ls-files openpilot/third_party/ | grep -q .; then
+  git checkout openpilot/third_party/
+fi
 
 # Mark as prebuilt release
 touch prebuilt
