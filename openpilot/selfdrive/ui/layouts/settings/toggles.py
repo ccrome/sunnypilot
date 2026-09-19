@@ -8,6 +8,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.widgets import DialogResult
 from openpilot.selfdrive.ui.ui_state import ui_state
+from opendbc.car.honda.values import CAR as HONDA_CAR
 
 if gui_app.sunnypilot_ui():
   from openpilot.system.ui.sunnypilot.widgets.list_view import toggle_item_sp as toggle_item
@@ -172,6 +173,7 @@ class TogglesLayout(Widget):
     )
 
     if ui_state.CP is not None:
+      self._long_personality_setting.set_visible(ui_state.CP.carFingerprint != HONDA_CAR.HONDA_CRV_5G)
       if ui_state.has_longitudinal_control:
         self._toggles["ExperimentalMode"].action_item.set_enabled(True)
         self._toggles["ExperimentalMode"].set_description(e2e_description)

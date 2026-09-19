@@ -21,6 +21,8 @@ from openpilot.sunnypilot.sunnylink.capabilities import (
   generate_capabilities,
 )
 from openpilot.common.test import OpenpilotTestCase
+from openpilot.common.params import Params
+from opendbc.car.honda.values import CAR
 
 
 KNOWN_PROTOCOL_VERSIONS = (1,)
@@ -89,3 +91,13 @@ class TestCapabilitiesShape(OpenpilotTestCase):
     assert isinstance(caps["brand"], str)
     assert isinstance(caps["steer_control_type"], str)
     assert isinstance(caps["device_type"], str)
+
+
+class TestCrvCapabilities(OpenpilotTestCase):
+  def test_crv_hides_runtime_personality(self):
+    params = Params()
+    params.put("CarPlatformBundle", {"brand": "honda", "platform": str(CAR.HONDA_CRV_5G)}, block=True)
+    assert generate_capabilities(params)["longitudinal_personality_adjustable"] is False
+
+  def test_other_platforms_keep_runtime_personality(self):
+    assert generate_capabilities()["longitudinal_personality_adjustable"] is True

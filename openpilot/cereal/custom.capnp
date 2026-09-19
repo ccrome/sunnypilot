@@ -204,6 +204,22 @@ struct LongitudinalPlanSP @0xf35cc4560bbf6ec2 {
   aTarget @5 :Float32;
   events @6 :List(OnroadEventSP.Event);
   e2eAlerts @7 :E2eAlerts;
+  hondaCrvGuard @8 :HondaCrvGuard;
+
+  struct HondaCrvGuard {
+    enabled @0 :Bool;
+    stopLatchActive @1 :Bool;
+    closingLeadGuardActive @2 :Bool;
+    lowSpeedLimitActive @3 :Bool;
+    guardedLeadIndex @4 :Int8 = -1;
+    dRel @5 :Float32;
+    vRel @6 :Float32;
+    modelProb @7 :Float32;
+    timeGap @8 :Float32;
+    accelCeiling @9 :Float32;
+    unguardedATarget @10 :Float32;
+    guardedATarget @11 :Float32;
+  }
 
   struct DynamicExperimentalControl {
     state @0 :DynamicExperimentalControlState;
@@ -363,6 +379,29 @@ struct CarParamsSP @0x80ae746ee2596b11 {
   pcmCruiseSpeed @3 :Bool;
   intelligentCruiseButtonManagementAvailable @4 :Bool;
   enableGasInterceptor @5 :Bool;
+  hondaCrvLongitudinalTune @6 :HondaCrvLongitudinalTune;
+
+  struct HondaCrvLongitudinalTune {
+    enabled @0 :Bool;
+    tuneId @1 :Text;
+    revision @2 :UInt16;
+    actuatorDelay @3 :Float32;
+    followingTime @4 :Float32;
+    integralBreakpoints @5 :List(Float32);
+    integralGains @6 :List(Float32);
+    brakeEntryAccel @7 :Float32;
+    brakeReleaseAccel @8 :Float32;
+    gasEntryAccel @9 :Float32;
+    lowSpeedMax @10 :Float32;
+    launchAccelMax @11 :Float32;
+    closeLeadDistance @12 :Float32;
+    fullLaunchDistance @13 :Float32;
+    closingVRel @14 :Float32;
+    closingTimeGap @15 :Float32;
+    guardReleaseTime @16 :Float32;
+    stopReleaseVRel @17 :Float32;
+    leadProbability @18 :Float32;
+  }
 
   neuralNetworkLateralControl @2 :NeuralNetworkLateralControl;
 
