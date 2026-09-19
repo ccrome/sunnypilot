@@ -7,6 +7,8 @@ See the LICENSE.md file in the root directory for more details.
 from typing import Any
 
 from opendbc.car import structs
+from opendbc.car.honda.values import CAR
+from opendbc.sunnypilot.car.honda.longitudinal_tuning import CRV_LONGITUDINAL_TUNE
 from opendbc.car.interfaces import CarInterfaceBase
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
@@ -99,6 +101,33 @@ def _cleanup_unsupported_params(CP: structs.CarParams, CP_SP: structs.CarParamsS
 
 
 def setup_interfaces(CI: CarInterfaceBase, params: Params | None = None) -> None:
+  if params is None:
+    params = Params()
+  if CI.CP.carFingerprint == CAR.HONDA_CRV_5G:
+    tune = CRV_LONGITUDINAL_TUNE
+    CI.CP.longitudinalActuatorDelay = tune.actuator_delay
+    CI.CP.longitudinalTuning.kiBP = list(tune.ki_bp)
+    CI.CP.longitudinalTuning.kiV = list(tune.ki_v)
+    tune_log = CI.CP_SP.hondaCrvLongitudinalTune
+    tune_log.enabled = True
+    tune_log.tuneId = tune.tune_id
+    tune_log.revision = tune.revision
+    tune_log.actuatorDelay = tune.actuator_delay
+    tune_log.followingTime = tune.following_time
+    tune_log.integralBreakpoints = list(tune.ki_bp)
+    tune_log.integralGains = list(tune.ki_v)
+    tune_log.brakeEntryAccel = tune.brake_entry_accel
+    tune_log.brakeReleaseAccel = tune.brake_release_accel
+    tune_log.gasEntryAccel = tune.gas_entry_accel
+    tune_log.lowSpeedMax = tune.low_speed_max
+    tune_log.launchAccelMax = tune.launch_accel_max
+    tune_log.closeLeadDistance = tune.close_lead_distance
+    tune_log.fullLaunchDistance = tune.full_launch_distance
+    tune_log.closingVRel = tune.closing_v_rel
+    tune_log.closingTimeGap = tune.closing_time_gap
+    tune_log.guardReleaseTime = tune.guard_release_time
+    tune_log.stopReleaseVRel = tune.stop_release_v_rel
+    tune_log.leadProbability = tune.lead_probability
   enforce_torque = _enforce_torque_lateral_control(CI.CP, params)
   nnlc_enabled = _initialize_neural_network_lateral_control(CI.CP, CI.CP_SP, params)
   _initialize_intelligent_cruise_button_management(CI.CP, CI.CP_SP, params)

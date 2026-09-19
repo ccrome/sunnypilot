@@ -10,6 +10,7 @@ from openpilot.cereal import custom, messaging
 from opendbc.car.structs import car
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, UNSUPPORTED_LONGITUDINAL_CAR
 from opendbc.car.subaru.values import CAR as SUBARU_CAR, SubaruFlags
+from opendbc.car.honda.values import CAR as HONDA_CAR
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
@@ -42,6 +43,7 @@ CAPABILITY_FIELDS = (
   "device_type",
   "subaru_has_sng",
   "hyundai_alpha_long_available",
+  "longitudinal_personality_adjustable",
 )
 
 CAPABILITY_LABELS: dict[str, str] = {
@@ -64,6 +66,7 @@ CAPABILITY_LABELS: dict[str, str] = {
   "device_type": "Device type",
   "subaru_has_sng": "Subaru Stop-and-Go available",
   "hyundai_alpha_long_available": "Hyundai Alpha Longitudinal available",
+  "longitudinal_personality_adjustable": "runtime longitudinal personality selection",
 }
 
 # Explicit defaults for non-boolean capability fields
@@ -135,6 +138,7 @@ def generate_capabilities(params: Params | None = None) -> dict:
   bundle = params.get("CarPlatformBundle")
   bundle_brand = _bundle_field(bundle, "brand")
   bundle_platform = _bundle_field(bundle, "platform")
+  caps["longitudinal_personality_adjustable"] = bundle_platform != str(HONDA_CAR.HONDA_CRV_5G)
 
   # Bundle-first brand resolution; CP is fallback only.
   if bundle_brand:
@@ -162,6 +166,7 @@ def generate_capabilities(params: Params | None = None) -> dict:
       caps["enable_bsm"] = bool(CP.enableBsm)
       # Generic SnG fallback. Brand-specific opaque flags below override.
       caps["has_stop_and_go"] = bool(CP.openpilotLongitudinalControl)
+      caps["longitudinal_personality_adjustable"] &= CP.carFingerprint != HONDA_CAR.HONDA_CRV_5G
     except Exception:
       CP = None
       cloudlog.exception("capabilities: failed to deserialize CarParamsPersistent")

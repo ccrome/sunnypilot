@@ -7,7 +7,15 @@ See the LICENSE.md file in the root directory for more details.
 
 from openpilot.common.params import Params
 from openpilot.common.test import OpenpilotTestCase
-from openpilot.sunnypilot.system.params_migration import _migrate_model_bundle_slots
+from openpilot.sunnypilot.system.params_migration import _migrate_model_bundle_slots, _remove_legacy_crv_profile
+
+
+def test_removes_unregistered_legacy_crv_profile(tmp_path):
+  params = Params(str(tmp_path))
+  legacy_path = tmp_path / "d" / "HondaCrvLongitudinalTuningProfile"
+  legacy_path.write_text("3")
+  _remove_legacy_crv_profile(params)
+  assert not legacy_path.exists()
 
 
 class TestModelBundleSlotMigration(OpenpilotTestCase):

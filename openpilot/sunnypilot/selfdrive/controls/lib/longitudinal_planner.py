@@ -89,6 +89,23 @@ class LongitudinalPlannerSP:
     longitudinalPlanSP.aTarget = float(self.output_a_target)
     longitudinalPlanSP.events = self.events_sp.to_msg()
 
+    # CR-V fixed-tune safety diagnostics
+    if hasattr(self, "crv_guard_state"):
+      state = self.crv_guard_state
+      guard = longitudinalPlanSP.hondaCrvGuard
+      guard.enabled = state.enabled
+      guard.stopLatchActive = state.stop_latch_active
+      guard.closingLeadGuardActive = state.closing_lead_guard_active
+      guard.lowSpeedLimitActive = state.low_speed_limit_active
+      guard.guardedLeadIndex = state.guarded_lead_index
+      guard.dRel = state.d_rel
+      guard.vRel = state.v_rel
+      guard.modelProb = state.model_prob
+      guard.timeGap = state.time_gap
+      guard.accelCeiling = state.accel_ceiling
+      guard.unguardedATarget = state.unguarded_a_target
+      guard.guardedATarget = state.guarded_a_target
+
     # Dynamic Experimental Control
     dec = longitudinalPlanSP.dec
     dec.state = DecState.blended if self.dec.mode() == 'blended' else DecState.acc
