@@ -2,8 +2,8 @@
   path = panda
   url = https://github.com/sunnyhaibin/panda.git
 [submodule "opendbc"]
-  path = opendbc_repo
-  url = https://github.com/sunnypilot/opendbc.git
+	path = opendbc_repo
+	url = https://github.com/ccrome/opendbc.git
 [submodule "msgq"]
   path = msgq_repo
   url = https://github.com/sunnypilot/msgq.git
