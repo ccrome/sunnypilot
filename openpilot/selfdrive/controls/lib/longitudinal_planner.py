@@ -14,6 +14,8 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDX
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
+from opendbc.car.honda.values import CAR as HONDA_CAR
+from openpilot.selfdrive.controls.lib.crv_longitudinal_guard import CrvLongitudinalGuard, CrvGuardState
 
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
 
@@ -58,6 +60,9 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
 class LongitudinalPlanner(LongitudinalPlannerSP):
   def __init__(self, CP, CP_SP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
+    self.is_honda_crv_5g = CP.carFingerprint == HONDA_CAR.HONDA_CRV_5G
+    self.crv_guard = CrvLongitudinalGuard(dt) if self.is_honda_crv_5g else None
+    self.crv_guard_state = CrvGuardState(enabled=False)
     self.mpc = LongitudinalMpc(dt=dt)
     LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc)
     self.fcw = False
@@ -153,6 +158,14 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+
+    if self.crv_guard is not None:
+      self.output_a_target, self.output_should_stop = self.crv_guard.update(
+        sm['radarState'], v_ego, self.output_a_target, self.output_should_stop,
+        stopping_state=sm['controlsState'].longControlState == LongCtrlState.stopping,
+        reset=reset_state,
+      )
+      self.crv_guard_state = self.crv_guard.state
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 

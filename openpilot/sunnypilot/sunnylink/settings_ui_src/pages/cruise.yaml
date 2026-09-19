@@ -41,6 +41,10 @@ sections:
       label: Standard
     - value: 2
       label: Relaxed
+    visibility:
+    - type: capability
+      field: longitudinal_personality_adjustable
+      equals: true
     enablement:
     - $ref: '#/macros/longitudinal'
   - key: IntelligentCruiseButtonManagement

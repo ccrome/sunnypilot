@@ -7,6 +7,7 @@ import openpilot.cereal.messaging as messaging
 
 from openpilot.cereal import log, custom
 from opendbc.car.structs import car
+from opendbc.car.honda.values import CAR as HONDA_CAR
 from openpilot.cereal.visionipc import VisionStreamType
 from msgq.visionipc import VisionIpcClient
 
@@ -55,6 +56,17 @@ TurnDirection = custom.ModelDataV2SP.TurnDirection
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
 
+def get_longitudinal_personality(CP, params: Params):
+  if CP.carFingerprint == HONDA_CAR.HONDA_CRV_5G:
+    return log.LongitudinalPersonality.relaxed
+  return get_sanitize_int_param(
+    "LongitudinalPersonality",
+    min(log.LongitudinalPersonality.schema.enumerants.values()),
+    max(log.LongitudinalPersonality.schema.enumerants.values()),
+    params,
+  )
+
+
 class SelfdriveD(CruiseHelper):
   def __init__(self, CP=None, CP_SP=None):
     self.params = Params()
@@ -75,6 +87,8 @@ class SelfdriveD(CruiseHelper):
       cloudlog.info("selfdrived got CarParamsSP")
     else:
       self.CP_SP = CP_SP
+
+    self.is_honda_crv_5g = self.CP.carFingerprint == HONDA_CAR.HONDA_CRV_5G
 
     self.car_events = CarEvents(self.CP)
 
@@ -142,12 +156,7 @@ class SelfdriveD(CruiseHelper):
     self.logged_comm_issue = None
     self.not_running_prev = None
     self.experimental_mode = False
-    self.personality = get_sanitize_int_param(
-      "LongitudinalPersonality",
-      min(log.LongitudinalPersonality.schema.enumerants.values()),
-      max(log.LongitudinalPersonality.schema.enumerants.values()),
-      self.params
-    )
+    self.personality = get_longitudinal_personality(self.CP, self.params)
     self.recalibrating_seen = False
     self.dm_lockout_set = False
     self.dm_uncertain_alerted = False
@@ -517,7 +526,7 @@ class SelfdriveD(CruiseHelper):
     # decrement personality on distance button press
     if self.CP.openpilotLongitudinalControl:
       if any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents):
-        if not self.experimental_mode_switched:
+        if not self.experimental_mode_switched and not self.is_honda_crv_5g:
           self.personality = (self.personality - 1) % 3
           self.params.put('LongitudinalPersonality', self.personality)
           self.events.add(EventName.personalityChanged)
@@ -666,7 +675,7 @@ class SelfdriveD(CruiseHelper):
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
-      self.personality = self.params.get("LongitudinalPersonality", return_default=True)
+      self.personality = get_longitudinal_personality(self.CP, self.params)
 
       self.mads.read_params()
       time.sleep(0.1)

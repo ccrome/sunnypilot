@@ -644,6 +644,13 @@
                   "label": "Relaxed"
                 }
               ],
+              "visibility": [
+                {
+                  "type": "capability",
+                  "field": "longitudinal_personality_adjustable",
+                  "equals": true
+                }
+              ],
               "enablement": [
                 {
                   "type": "capability",

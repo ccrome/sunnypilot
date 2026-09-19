@@ -355,3 +355,4 @@ class TestItemCompleteness(OpenpilotTestCase):
     assert lp is not None
     assert "options" in lp
     assert len(lp["options"]) == 3
+    assert any(rule.get("field") == "longitudinal_personality_adjustable" for rule in lp["visibility"])

@@ -5,6 +5,7 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 import json
+from pathlib import Path
 
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.car.sync_sunnylink_params import CAR_LIST_JSON_OUT
@@ -103,7 +104,18 @@ def _migrate_model_bundle_slots(_params):
     cloudlog.exception(f"Error migrating model bundle slots: {e}")
 
 
+def _remove_legacy_crv_profile(_params):
+  try:
+    Path(_params.get_param_path("HondaCrvLongitudinalTuningProfile")).unlink(missing_ok=True)
+  except OSError as e:
+    cloudlog.exception(f"Error removing legacy CR-V longitudinal profile: {e}")
+
+
 def run_migration(_params):
+  # This CR-V profile was replaced by one fixed, logged tune. The key is no
+  # longer registered, so remove only its exact legacy backing file.
+  _remove_legacy_crv_profile(_params)
+
   # migrate OnroadScreenOffBrightness
   if _params.get("OnroadScreenOffBrightnessMigrated") != ONROAD_BRIGHTNESS_MIGRATION_VERSION:
     try:
