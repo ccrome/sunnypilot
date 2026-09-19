@@ -15,7 +15,7 @@ class Plant:
   messaging_initialized = False
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
-               enabled=True, only_lead2=False, only_radar=False, e2e=False, personality=0, force_decel=False):
+               enabled=True, only_lead2=False, only_radar=False, e2e=False, personality=0, force_decel=False, car_fingerprint=None):
     self.rate = 1. / DT_MDL
 
     if not Plant.messaging_initialized:
@@ -51,8 +51,9 @@ class Plant:
     from opendbc.car.honda.values import CAR
     from opendbc.car.honda.interface import CarInterface
 
-    CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-    CP_SP = CarInterface.get_non_essential_params_sp(CP, CAR.HONDA_CIVIC)
+    car_fingerprint = CAR.HONDA_CIVIC if car_fingerprint is None else car_fingerprint
+    CP = CarInterface.get_non_essential_params(car_fingerprint)
+    CP_SP = CarInterface.get_non_essential_params_sp(CP, car_fingerprint)
     self.planner = LongitudinalPlanner(CP, CP_SP, init_v=self.speed)
 
   @property
@@ -123,6 +124,7 @@ class Plant:
     model.modelV2.meta.disengagePredictions.gasPressProbs = [float(prob_throttle) for _ in range(6)]
 
     control.controlsState.longControlState = LongCtrlState.pid if self.enabled else LongCtrlState.off
+    ss.selfdriveState.enabled = self.enabled
     ss.selfdriveState.experimentalMode = self.e2e
     ss.selfdriveState.personality = self.personality
     control.controlsState.forceDecel = self.force_decel
