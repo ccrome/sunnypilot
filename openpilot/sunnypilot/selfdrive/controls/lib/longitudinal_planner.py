@@ -97,14 +97,14 @@ class LongitudinalPlannerSP:
       guard.stopLatchActive = state.stop_latch_active
       guard.closingLeadGuardActive = state.closing_lead_guard_active
       guard.lowSpeedLimitActive = state.low_speed_limit_active
-      guard.guardedLeadIndex = state.guarded_lead_index
-      guard.dRel = state.d_rel
-      guard.vRel = state.v_rel
-      guard.modelProb = state.model_prob
-      guard.timeGap = state.time_gap
-      guard.accelCeiling = state.accel_ceiling
-      guard.unguardedATarget = state.unguarded_a_target
-      guard.guardedATarget = state.guarded_a_target
+      guard.guardedLeadIndex = int(state.guarded_lead_index)
+      guard.dRel = float(state.d_rel)
+      guard.vRel = float(state.v_rel)
+      guard.modelProb = float(state.model_prob)
+      guard.timeGap = float(state.time_gap)
+      guard.accelCeiling = float(state.accel_ceiling)
+      guard.unguardedATarget = float(state.unguarded_a_target)
+      guard.guardedATarget = float(state.guarded_a_target)
 
     # Dynamic Experimental Control
     dec = longitudinalPlanSP.dec
