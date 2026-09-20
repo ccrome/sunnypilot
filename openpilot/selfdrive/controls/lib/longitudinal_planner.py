@@ -27,6 +27,9 @@ ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 LEAD_LOSS_HOLD_TIME = 0.5
 LEAD_LOSS_RELEASE_JERK = 1.0
+STOPPED_LEAD_DISTANCE = 3.0
+STOPPED_LEAD_SPEED = 0.5
+STOPPED_LEAD_LOSS_HOLD_TIME = 0.5
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -74,6 +77,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.output_should_stop = False
     self.lead_loss_hold_remaining = 0.0
     self.lead_loss_hold_accel = 0.0
+    self.stopped_lead_loss_hold_remaining = 0.0
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -112,6 +116,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
       self.lead_loss_hold_remaining = 0.0
+      self.stopped_lead_loss_hold_remaining = 0.0
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -174,8 +179,23 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     else:
       self.lead_loss_hold_remaining = 0.0
 
+    stopped_close_lead = any(lead.present and lead.dRel < STOPPED_LEAD_DISTANCE and lead.vLead < STOPPED_LEAD_SPEED
+                             for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))
+    stopped_lead_loss_hold_active = False
+    if self.is_crv_5g and v_ego < STOPPED_LEAD_SPEED and stopped_close_lead:
+      # A stopped lead can disappear briefly during tracker switching. Keep the
+      # stop command until the short loss window expires instead of restarting.
+      self.stopped_lead_loss_hold_remaining = STOPPED_LEAD_LOSS_HOLD_TIME
+    elif self.is_crv_5g and not any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo)) \
+        and self.stopped_lead_loss_hold_remaining > 0.0:
+      output_a_target = min(output_a_target, 0.0)
+      stopped_lead_loss_hold_active = True
+      self.stopped_lead_loss_hold_remaining = max(0.0, self.stopped_lead_loss_hold_remaining - self.dt)
+    else:
+      self.stopped_lead_loss_hold_remaining = 0.0
+
     self.mpc.source = plan_source
-    self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
+    self.output_should_stop = any(should_stop for _, _, should_stop in candidates) or stopped_lead_loss_hold_active
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
