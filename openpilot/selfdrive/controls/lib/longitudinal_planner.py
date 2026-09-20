@@ -30,6 +30,9 @@ LEAD_LOSS_RELEASE_JERK = 1.0
 STOPPED_LEAD_DISTANCE = 3.0
 STOPPED_LEAD_SPEED = 0.5
 STOPPED_LEAD_LOSS_HOLD_TIME = 0.5
+CRV_TRACKED_LEAD_MIN_GAP = 2.0
+CRV_TRACKED_LEAD_CLOSING_SPEED = 0.1
+CRV_TRACKED_LEAD_COMFORT_BRAKE = 2.5
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -59,6 +62,29 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
   target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
   return target_accel
+
+
+def get_crv_tracked_lead_accel(v_ego, d_rel, v_rel, actuator_delay):
+  """Return a braking limit when a tracked lead leaves too little stopping margin.
+
+  This is a dynamic safety constraint, not a following-distance target. It
+  accounts for the distance covered during the actuator delay and for the
+  current closing speed, then limits the command needed to stop with a small
+  physical reserve ahead of the lead.
+  """
+  if not all(math.isfinite(value) for value in (v_ego, d_rel, v_rel, actuator_delay)):
+    return None
+  if v_ego <= 0.1 or d_rel <= 0.0 or v_rel >= -CRV_TRACKED_LEAD_CLOSING_SPEED:
+    return None
+
+  closing_speed = -v_rel
+  delay_distance = max(v_ego, 0.0) * actuator_delay + closing_speed * actuator_delay
+  available_distance = d_rel - delay_distance - CRV_TRACKED_LEAD_MIN_GAP
+  if available_distance <= 0.0:
+    return ACCEL_MIN
+
+  required_decel = -(v_ego ** 2) / (2.0 * available_distance)
+  return max(ACCEL_MIN, min(0.0, required_decel))
 
 
 class LongitudinalPlanner(LongitudinalPlannerSP):
@@ -178,6 +204,20 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.lead_loss_hold_remaining = max(0.0, self.lead_loss_hold_remaining - self.dt)
     else:
       self.lead_loss_hold_remaining = 0.0
+
+    if self.is_crv_5g:
+      # Keep the measured stopping margin safe when a credible lead remains
+      # tracked. L1 handles transient lead loss and L2 handles stopped-lead
+      # dropout; neither protects this continuously tracked closing case.
+      tracked_leads = [lead for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo)
+                       if lead.present and lead.modelProb >= 0.5]
+      if tracked_leads:
+        lead = min(tracked_leads, key=lambda candidate: candidate.dRel)
+        tracked_lead_accel = get_crv_tracked_lead_accel(
+          v_ego, lead.dRel, lead.vRel, self.CP.longitudinalActuatorDelay,
+        )
+        if tracked_lead_accel is not None:
+          output_a_target = min(output_a_target, tracked_lead_accel)
 
     stopped_close_lead = any(lead.present and lead.dRel < STOPPED_LEAD_DISTANCE and lead.vLead < STOPPED_LEAD_SPEED
                              for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))

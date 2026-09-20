@@ -92,6 +92,9 @@ function launch {
   cd openpilot/system/manager
   if [ ! -f $DIR/prebuilt ]; then
     ./build.py
+    # A successful first-boot build is now equivalent to a prebuilt release.
+    # Persist the marker so the device does not rebuild on every reboot.
+    touch "$DIR/prebuilt"
   fi
   ./manager.py
 
