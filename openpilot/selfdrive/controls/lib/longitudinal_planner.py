@@ -30,6 +30,9 @@ LEAD_LOSS_RELEASE_JERK = 1.0
 STOPPED_LEAD_DISTANCE = 3.0
 STOPPED_LEAD_SPEED = 0.5
 STOPPED_LEAD_LOSS_HOLD_TIME = 0.5
+CRV_CLOSE_STOP_DISTANCE = 2.5
+CRV_CLOSE_STOP_CLOSING_SPEED = 0.2
+CRV_CLOSE_STOP_MIN_SPEED = 0.3
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -59,6 +62,16 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
   target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
   return target_accel
+
+
+def crv_close_closing_should_stop(v_ego, leads):
+  """Require the stopping state for a short, shrinking tracked-lead gap."""
+  return v_ego > CRV_CLOSE_STOP_MIN_SPEED and any(
+    lead.present
+    and lead.dRel < CRV_CLOSE_STOP_DISTANCE
+    and lead.vRel < -CRV_CLOSE_STOP_CLOSING_SPEED
+    for lead in leads
+  )
 
 
 class LongitudinalPlanner(LongitudinalPlannerSP):
@@ -194,8 +207,14 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     else:
       self.stopped_lead_loss_hold_remaining = 0.0
 
+    close_closing_stop = self.is_crv_5g and crv_close_closing_should_stop(
+      v_ego, (sm['radarState'].leadOne, sm['radarState'].leadTwo))
+    if close_closing_stop:
+      output_a_target = min(output_a_target, 0.0)
+
     self.mpc.source = plan_source
-    self.output_should_stop = any(should_stop for _, _, should_stop in candidates) or stopped_lead_loss_hold_active
+    self.output_should_stop = any(should_stop for _, _, should_stop in candidates) \
+      or stopped_lead_loss_hold_active or close_closing_stop
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
