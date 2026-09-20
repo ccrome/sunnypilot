@@ -25,13 +25,13 @@ A_CRUISE_MIN = -1.2
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
-LEAD_LOSS_HOLD_TIME = 0.5
-LEAD_LOSS_RELEASE_JERK = 1.0
-CLOSE_CLOSING_LEAD_DISTANCE = 11.0
-CLOSE_CLOSING_LEAD_SPEED = -1.0
+BRIEF_TRACKER_LOSS_HOLD_TIME = 0.5
+BRIEF_TRACKER_LOSS_RELEASE_JERK = 1.0
+TRACKER_LOSS_CLOSE_LEAD_DISTANCE = 11.0
+TRACKER_LOSS_CLOSE_LEAD_SPEED = -1.0
 STOPPED_LEAD_DISTANCE = 3.0
 STOPPED_LEAD_SPEED = 0.5
-STOPPED_LEAD_LOSS_HOLD_TIME = 0.5
+STOPPED_TRACKER_LOSS_HOLD_TIME = 0.5
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -77,9 +77,9 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.a_cruise = init_a
     self.output_a_target = init_a
     self.output_should_stop = False
-    self.lead_loss_hold_remaining = 0.0
-    self.lead_loss_hold_accel = 0.0
-    self.stopped_lead_loss_hold_remaining = 0.0
+    self.tracker_loss_hold_remaining = 0.0
+    self.tracker_loss_hold_accel = 0.0
+    self.stopped_tracker_loss_hold_remaining = 0.0
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -117,8 +117,8 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.v_desired_filter.x = v_ego
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
-      self.lead_loss_hold_remaining = 0.0
-      self.stopped_lead_loss_hold_remaining = 0.0
+      self.tracker_loss_hold_remaining = 0.0
+      self.stopped_tracker_loss_hold_remaining = 0.0
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -166,38 +166,38 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     output_a_target, plan_source, _ = min(candidates, key=lambda c: c[0])
 
-    close_closing_lead = any(lead.present and lead.dRel < CLOSE_CLOSING_LEAD_DISTANCE and lead.vRel < CLOSE_CLOSING_LEAD_SPEED
+    close_closing_lead = any(lead.present and lead.dRel < TRACKER_LOSS_CLOSE_LEAD_DISTANCE and lead.vRel < TRACKER_LOSS_CLOSE_LEAD_SPEED
                              for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))
     if self.is_crv_5g and plan_source in MPC_SOURCES and close_closing_lead:
-      # A close lead can disappear for a few frames when tracker candidates
-      # switch. Do not authorize cruise acceleration during that gap.
-      self.lead_loss_hold_remaining = LEAD_LOSS_HOLD_TIME
-      self.lead_loss_hold_accel = min(output_a_target, 0.0)
-    elif not any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo)) and self.lead_loss_hold_remaining > 0.0:
-      elapsed = LEAD_LOSS_HOLD_TIME - self.lead_loss_hold_remaining
-      hold_accel = min(0.0, self.lead_loss_hold_accel + LEAD_LOSS_RELEASE_JERK * elapsed)
+      # A close lead can disappear for a few frames during tracker switching.
+      # Do not authorize cruise acceleration during that gap.
+      self.tracker_loss_hold_remaining = BRIEF_TRACKER_LOSS_HOLD_TIME
+      self.tracker_loss_hold_accel = min(output_a_target, 0.0)
+    elif not any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo)) and self.tracker_loss_hold_remaining > 0.0:
+      elapsed = BRIEF_TRACKER_LOSS_HOLD_TIME - self.tracker_loss_hold_remaining
+      hold_accel = min(0.0, self.tracker_loss_hold_accel + BRIEF_TRACKER_LOSS_RELEASE_JERK * elapsed)
       output_a_target = min(output_a_target, hold_accel)
-      self.lead_loss_hold_remaining = max(0.0, self.lead_loss_hold_remaining - self.dt)
+      self.tracker_loss_hold_remaining = max(0.0, self.tracker_loss_hold_remaining - self.dt)
     else:
-      self.lead_loss_hold_remaining = 0.0
+      self.tracker_loss_hold_remaining = 0.0
 
     stopped_close_lead = any(lead.present and lead.dRel < STOPPED_LEAD_DISTANCE and lead.vLead < STOPPED_LEAD_SPEED
                              for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))
-    stopped_lead_loss_hold_active = False
+    stopped_tracker_loss_hold_active = False
     if self.is_crv_5g and v_ego < STOPPED_LEAD_SPEED and stopped_close_lead:
       # A stopped lead can disappear briefly during tracker switching. Keep the
       # stop command until the short loss window expires instead of restarting.
-      self.stopped_lead_loss_hold_remaining = STOPPED_LEAD_LOSS_HOLD_TIME
+      self.stopped_tracker_loss_hold_remaining = STOPPED_TRACKER_LOSS_HOLD_TIME
     elif self.is_crv_5g and not any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo)) \
-        and self.stopped_lead_loss_hold_remaining > 0.0:
+        and self.stopped_tracker_loss_hold_remaining > 0.0:
       output_a_target = min(output_a_target, 0.0)
-      stopped_lead_loss_hold_active = True
-      self.stopped_lead_loss_hold_remaining = max(0.0, self.stopped_lead_loss_hold_remaining - self.dt)
+      stopped_tracker_loss_hold_active = True
+      self.stopped_tracker_loss_hold_remaining = max(0.0, self.stopped_tracker_loss_hold_remaining - self.dt)
     else:
-      self.stopped_lead_loss_hold_remaining = 0.0
+      self.stopped_tracker_loss_hold_remaining = 0.0
 
     self.mpc.source = plan_source
-    self.output_should_stop = any(should_stop for _, _, should_stop in candidates) or stopped_lead_loss_hold_active
+    self.output_should_stop = any(should_stop for _, _, should_stop in candidates) or stopped_tracker_loss_hold_active
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
