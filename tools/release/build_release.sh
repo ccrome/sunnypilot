@@ -8,6 +8,7 @@ cd $DIR
 BUILD_DIR="${BUILD_DIR:-/data/openpilot}"
 PUBLISH_REMOTE="${PUBLISH_REMOTE:-origin}"
 RUN_ONROAD_TEST="${RUN_ONROAD_TEST:-1}"
+SCONS_JOBS="${SCONS_JOBS:-}"
 SOURCE_DIR="$(git rev-parse --show-toplevel)"
 
 export PYTHONPATH="$BUILD_DIR:$BUILD_DIR/msgq_repo:$BUILD_DIR/opendbc_repo:$BUILD_DIR/rednose_repo:$BUILD_DIR/teleoprtc_repo:$BUILD_DIR/tinygrad_repo"
@@ -18,6 +19,11 @@ if [ -z "$RELEASE_BRANCH" ]; then
 fi
 
 BUILD_BRANCH=release-mici-staging
+
+SCONS_ARGS=()
+if [ -n "$SCONS_JOBS" ]; then
+  SCONS_ARGS=(-j "$SCONS_JOBS")
+fi
 
 
 # set git identity
@@ -54,17 +60,17 @@ for policy in /sys/devices/system/cpu/cpufreq/policy*; do
   fi
 done
 
-scons
+scons "${SCONS_ARGS[@]}"
 if [ -n "$INCLUDE_BIG_MODEL" ]; then
   test -f openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl.chunkmanifest
 fi
 
 if [ -z "$PANDA_DEBUG_BUILD" ]; then
   # release panda fw
-  CERT=/data/pandaextra/certs/release RELEASE=1 scons panda/
+  CERT=/data/pandaextra/certs/release RELEASE=1 scons "${SCONS_ARGS[@]}" panda/
 else
   # build with ALLOW_DEBUG=1 to enable features like experimental longitudinal
-  scons panda/
+  scons "${SCONS_ARGS[@]}" panda/
 fi
 
 # Ensure no submodules in release
