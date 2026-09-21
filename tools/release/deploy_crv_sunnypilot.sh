@@ -40,8 +40,15 @@ device_build() {
     connection.autoconnect yes connection.autoconnect-priority 90
   nmcli -t -f NAME,TYPE,AUTOCONNECT,AUTOCONNECT-PRIORITY,DEVICE connection show
 
-  test -z "$(git -C "$source_dir" status --porcelain)" \
-    || die "$source_dir has uncommitted changes"
+  dirty="$(git -C "$source_dir" status --porcelain)"
+  if test -n "$dirty"; then
+    test "$dirty" = "?? $SCRIPT_NAME" \
+      || die "$source_dir has uncommitted changes"
+    # The previous run may have synchronized this script before the source
+    # checkout had the tracked copy. Remove only that expected self-sync file
+    # so the branch update can materialize its tracked version.
+    rm -f "$source_dir/$SCRIPT_NAME"
+  fi
   git -C "$source_dir" fetch origin "$SOURCE_BRANCH"
   git -C "$source_dir" checkout "$SOURCE_BRANCH"
   git -C "$source_dir" pull --ff-only origin "$SOURCE_BRANCH"
