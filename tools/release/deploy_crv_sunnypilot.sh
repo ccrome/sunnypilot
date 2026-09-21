@@ -124,6 +124,18 @@ test "$source_commit" = "$(git -C "$SOURCE_DIR" rev-parse "origin/$SOURCE_BRANCH
 git -C "$OPENDBC_DIR" fetch origin "$SOURCE_BRANCH"
 test "$opendbc_commit" = "$(git -C "$OPENDBC_DIR" rev-parse "origin/$SOURCE_BRANCH")"
 
+ssh -A -o ConnectTimeout=10 "$COMMA_HOST" bash -s -- \
+  "$DEVICE_SOURCE_DIR" "$SOURCE_BRANCH" <<'REMOTE_SETUP'
+set -Eeuo pipefail
+device_source="$1"
+source_branch="$2"
+if test ! -d "$device_source/.git"; then
+  git clone --recurse-submodules --branch "$source_branch" --single-branch \
+    https://github.com/ccrome/sunnypilot.git "$device_source"
+fi
+mkdir -p "$device_source/tools/release"
+REMOTE_SETUP
+
 # Keep the device-side copy synchronized whenever this source-tree script changes.
 rsync -av --checksum --chmod=F755 \
   "$SOURCE_DIR/$SCRIPT_NAME" \
