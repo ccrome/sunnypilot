@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Build and publish the CR-V SunnyPilot release on the Comma.
 # This script never modifies the active /data/openpilot installation.
 
-SOURCE_DIR="${SOURCE_DIR:-$(git rev-parse --show-toplevel)}"
+SOURCE_DIR="${SOURCE_DIR:-}"
 SOURCE_BRANCH="${SOURCE_BRANCH:-crv-brake-gas-crossover}"
 INSTALLER_BRANCH="${INSTALLER_BRANCH:-crv-sng-tuning}"
 COMMA_HOST="${COMMA_HOST:-comma@192.168.86.31}"
@@ -106,6 +106,7 @@ if [[ "${1:-}" == --device-build ]]; then
   exit 0
 fi
 
+SOURCE_DIR="${SOURCE_DIR:-$(git rev-parse --show-toplevel)}"
 OPENDBC_DIR="$SOURCE_DIR/opendbc_repo"
 require_clean_repo "$SOURCE_DIR"
 require_clean_repo "$OPENDBC_DIR"
