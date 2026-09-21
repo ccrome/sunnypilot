@@ -33,6 +33,9 @@ STOPPED_LEAD_LOSS_HOLD_TIME = 0.5
 CRV_CLOSE_STOP_DISTANCE = 2.5
 CRV_CLOSE_STOP_CLOSING_SPEED = 0.2
 CRV_CLOSE_STOP_MIN_SPEED = 0.3
+CRV_CRUISE_SPEED_I_MIN_SPEED = 5.0
+CRV_CRUISE_SPEED_I_GAIN = 0.03
+CRV_CRUISE_SPEED_I_LIMIT = 0.15
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -44,7 +47,8 @@ def get_max_accel(v_ego):
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
 
-def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle):
+def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle,
+                     speed_error_bias=0.0):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
 
   if not e2e:
@@ -57,7 +61,7 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
       coast_limit = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [max_accel, clipped_accel_coast])
       max_accel = min(max_accel, coast_limit)
 
-  target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, max_accel)
+  target_accel = np.clip(v_cruise - v_ego + speed_error_bias, A_CRUISE_MIN, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
   target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
@@ -88,6 +92,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.a_cruise = init_a
     self.output_a_target = init_a
     self.output_should_stop = False
+    self.crv_cruise_speed_i = 0.0
     self.lead_loss_hold_remaining = 0.0
     self.lead_loss_hold_accel = 0.0
     self.stopped_lead_loss_hold_remaining = 0.0
@@ -128,6 +133,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.v_desired_filter.x = v_ego
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
+      self.crv_cruise_speed_i = 0.0
       self.lead_loss_hold_remaining = 0.0
       self.stopped_lead_loss_hold_remaining = 0.0
 
@@ -165,9 +171,20 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     is_e2e = self.is_e2e(sm)
 
+    lead_present = any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))
+    use_crv_cruise_speed_i = self.is_crv_5g and not is_e2e and not lead_present \
+      and self.allow_throttle and v_ego >= CRV_CRUISE_SPEED_I_MIN_SPEED
+    if use_crv_cruise_speed_i:
+      speed_error = v_cruise - v_ego
+      self.crv_cruise_speed_i = float(np.clip(
+        self.crv_cruise_speed_i + CRV_CRUISE_SPEED_I_GAIN * self.dt * speed_error,
+        -CRV_CRUISE_SPEED_I_LIMIT, CRV_CRUISE_SPEED_I_LIMIT))
+    else:
+      self.crv_cruise_speed_i = 0.0
+
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                                     accel_coast, self.allow_throttle)
+                                     accel_coast, self.allow_throttle, self.crv_cruise_speed_i)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
@@ -177,7 +194,6 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     output_a_target, plan_source, _ = min(candidates, key=lambda c: c[0])
 
-    lead_present = any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))
     if self.is_crv_5g and lead_present and plan_source in MPC_SOURCES:
       # A lead selected by the MPC can disappear for a few frames while tracker
       # candidates switch. Preserve its braking request instead of authorizing
