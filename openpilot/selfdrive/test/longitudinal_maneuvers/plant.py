@@ -177,7 +177,6 @@ class Plant:
       v_rel = v_lead - self.speed
     else:
       d_rel = 200.
-      v_rel = 0.
 
     # print at 5hz
     # if (self.rk.frame % (self.rate // 5)) == 0:
