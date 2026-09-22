@@ -88,7 +88,6 @@ class Plant:
         status = False
     else:
       d_rel = 200.
-      v_rel = 0.
       prob_lead = 0.0
       status = False
 
