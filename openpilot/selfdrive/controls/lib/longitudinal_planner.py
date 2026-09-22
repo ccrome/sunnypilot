@@ -11,6 +11,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import MPC_SOURCES, LongitudinalMpc, LongitudinalPlanSource
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import get_safe_obstacle_distance, get_stopped_equivalence_factor, get_T_FOLLOW
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
@@ -96,6 +97,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.lead_loss_hold_remaining = 0.0
     self.lead_loss_hold_accel = 0.0
     self.stopped_lead_loss_hold_remaining = 0.0
+    self.crv_post_restart_gap_hold = False
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -136,6 +138,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.crv_cruise_speed_i = 0.0
       self.lead_loss_hold_remaining = 0.0
       self.stopped_lead_loss_hold_remaining = 0.0
+      self.crv_post_restart_gap_hold = False
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -222,6 +225,24 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.stopped_lead_loss_hold_remaining = max(0.0, self.stopped_lead_loss_hold_remaining - self.dt)
     else:
       self.stopped_lead_loss_hold_remaining = 0.0
+
+    tracked_leads = [lead for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo) if lead.present]
+    if self.is_crv_5g and v_ego < STOPPED_LEAD_SPEED and stopped_close_lead:
+      # Remember that the ego vehicle stopped with an insufficient following
+      # gap. A moving lead must open that gap before restart acceleration.
+      self.crv_post_restart_gap_hold = True
+    elif self.crv_post_restart_gap_hold and not tracked_leads:
+      # Lead loss is handled by the existing L1/L2 protections.
+      self.crv_post_restart_gap_hold = False
+
+    if self.crv_post_restart_gap_hold and tracked_leads:
+      closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
+      release_distance = get_safe_obstacle_distance(v_ego, get_T_FOLLOW(sm['selfdriveState'].personality)) \
+        - get_stopped_equivalence_factor(max(closest_lead.vLead, 0.0))
+      if closest_lead.dRel >= release_distance:
+        self.crv_post_restart_gap_hold = False
+      else:
+        output_a_target = min(output_a_target, 0.0)
 
     close_closing_stop = self.is_crv_5g and crv_close_closing_should_stop(
       v_ego, (sm['radarState'].leadOne, sm['radarState'].leadTwo))

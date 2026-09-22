@@ -3,6 +3,7 @@
 from opendbc.car.honda.values import CAR
 
 from openpilot.common.test import OpenpilotTestCase
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import get_safe_obstacle_distance, get_stopped_equivalence_factor, get_T_FOLLOW
 from openpilot.selfdrive.test.longitudinal_maneuvers.plant import Plant
 
 
@@ -22,7 +23,9 @@ class TestCrvPostRestartGapRegression(OpenpilotTestCase):
     for _ in range(200):
       plant.step(v_lead=2.0, prob_lead=1.0, v_cruise=20.0)
       d_rel = plant.distance_lead - plant.distance
-      if d_rel < 6.0:
+      release_distance = get_safe_obstacle_distance(plant.speed, get_T_FOLLOW()) \
+        - get_stopped_equivalence_factor(2.0)
+      if d_rel < release_distance:
         close_gap_commands.append((d_rel, plant.planner.output_a_target, plant.speed))
       else:
         opened_gap_commands.append((d_rel, plant.planner.output_a_target, plant.speed))
