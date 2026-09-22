@@ -60,7 +60,8 @@ class Plant:
   def current_time(self):
     return float(self.rk.frame) / self.rate
 
-  def step(self, v_lead=0.0, prob_lead=1.0, v_cruise=50., pitch=0.0, prob_throttle=1.0):
+  def step(self, v_lead=0.0, prob_lead=1.0, v_cruise=50., pitch=0.0, prob_throttle=1.0,
+           lead_one=None, lead_two=None):
     # ******** publish a fake model going straight and fake calibration ********
     # note that this is worst case for MPC, since model will delay long mpc by one time step
     radar = messaging.new_message('radarState')
@@ -91,21 +92,32 @@ class Plant:
       prob_lead = 0.0
       status = False
 
-    lead = log.RadarState.LeadData.new_message()
-    lead.dRel = float(d_rel)
-    lead.yRel = 0.0
-    lead.vRel = float(v_rel)
-    lead.vLead = float(v_lead)
-    lead.vLeadK = float(v_lead)
-    lead.aLeadK = float(a_lead)
-    # TODO use real radard logic for this
-    lead.aLeadTau = float(_LEAD_ACCEL_TAU)
-    lead.present = status
-    lead.modelProb = float(prob_lead)
-    lead.radar = True
+    def make_lead(spec):
+      spec = {} if spec is None else spec
+      candidate_v_lead = float(spec.get('v_lead', v_lead))
+      candidate_prob = float(spec.get('prob', prob_lead))
+      candidate_present = bool(spec.get('present', status))
+      candidate_d_rel = float(spec.get('d_rel', d_rel))
+      candidate_v_rel = float(spec.get('v_rel', candidate_v_lead - self.speed))
+      candidate_a_lead = float(spec.get('a_lead', a_lead))
+
+      candidate = log.RadarState.LeadData.new_message()
+      candidate.dRel = candidate_d_rel
+      candidate.yRel = float(spec.get('y_rel', 0.0))
+      candidate.vRel = candidate_v_rel
+      candidate.vLead = candidate_v_lead
+      candidate.vLeadK = candidate_v_lead
+      candidate.aLeadK = candidate_a_lead
+      # TODO use real radard logic for this
+      candidate.aLeadTau = float(spec.get('a_lead_tau', _LEAD_ACCEL_TAU))
+      candidate.present = candidate_present
+      candidate.modelProb = candidate_prob
+      candidate.radar = bool(spec.get('radar', True))
+      return candidate
+
     if not self.only_lead2:
-      radar.radarState.leadOne = lead
-    radar.radarState.leadTwo = lead
+      radar.radarState.leadOne = make_lead(lead_one)
+    radar.radarState.leadTwo = make_lead(lead_two)
 
     # Simulate model predicting slightly faster speed
     # this is to ensure lead policy is effective when model
