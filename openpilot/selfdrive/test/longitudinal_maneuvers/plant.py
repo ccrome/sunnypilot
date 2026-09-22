@@ -79,7 +79,6 @@ class Plant:
 
     if self.lead_relevancy:
       d_rel = np.maximum(0., self.distance_lead - self.distance)
-      v_rel = v_lead - self.speed
       if self.only_radar:
         status = True
       elif prob_lead > .5:
@@ -174,7 +173,6 @@ class Plant:
     # *** radar model ***
     if self.lead_relevancy:
       d_rel = np.maximum(0., self.distance_lead - self.distance)
-      v_rel = v_lead - self.speed
     else:
       d_rel = 200.
 
