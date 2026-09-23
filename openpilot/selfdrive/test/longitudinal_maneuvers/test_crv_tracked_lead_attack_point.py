@@ -32,6 +32,12 @@ def run_ablation(candidate_mode: str, initial_speed: float = 29.0) -> np.ndarray
       phase = int(t / 1.0) % 2
       lead_one["d_rel"] += 8.0 if phase else 0.0
       lead_two["d_rel"] += 8.0 if not phase else 0.0
+    elif candidate_mode == "small_noise":
+      # Near-tied candidates should not make the MPC switch sources every
+      # cycle. This is the deterministic regression for source hysteresis.
+      phase = int(t / 1.0) % 2
+      lead_one["d_rel"] += 0.25 if phase else 0.0
+      lead_two["d_rel"] += 0.25 if not phase else 0.0
     elif candidate_mode == "fixed_lead_one":
       lead_two["present"] = False
       lead_two["prob"] = 0.0
@@ -67,5 +73,10 @@ class TestCrvTrackedLeadAttackPoint(OpenpilotTestCase):
 
   def test_fixed_lead_candidate_removes_candidate_arbitration(self):
     rows = run_ablation("fixed_lead_one")
+    sources = rows[:, 5].astype(str)
+    assert np.count_nonzero(sources[1:] != sources[:-1]) <= 2
+
+  def test_near_tied_lead_candidates_do_not_churn_sources(self):
+    rows = run_ablation("small_noise")
     sources = rows[:, 5].astype(str)
     assert np.count_nonzero(sources[1:] != sources[:-1]) <= 2
