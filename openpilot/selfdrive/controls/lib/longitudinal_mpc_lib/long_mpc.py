@@ -56,6 +56,7 @@ T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
 MIN_X_LEAD_FACTOR = 0.5
+LEAD_SOURCE_SWITCH_MARGIN = 1.0
 
 def get_jerk_factor(personality=log.LongitudinalPersonality.standard):
   if personality==log.LongitudinalPersonality.relaxed:
@@ -320,7 +321,19 @@ class LongitudinalMpc:
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
 
     x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle])
-    self.source = MPC_SOURCES[np.argmin(x_obstacles[0])]
+    closest_source = int(np.argmin(x_obstacles[0]))
+    current_source = MPC_SOURCES.index(self.source) if self.source in MPC_SOURCES else None
+    lead_present = [radarstate.leadOne.present, radarstate.leadTwo.present]
+    if current_source is None or not lead_present[current_source]:
+      selected_source = closest_source
+    else:
+      alternate_source = 1 - current_source
+      alternate_is_meaningfully_closer = (
+        lead_present[alternate_source]
+        and x_obstacles[0, alternate_source] + LEAD_SOURCE_SWITCH_MARGIN < x_obstacles[0, current_source]
+      )
+      selected_source = alternate_source if alternate_is_meaningfully_closer else current_source
+    self.source = MPC_SOURCES[selected_source]
 
     self.yref[:,:] = 0.0
     for i in range(N):
