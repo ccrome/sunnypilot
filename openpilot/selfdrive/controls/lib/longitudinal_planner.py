@@ -25,7 +25,9 @@ J_CRUISE_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MIN = -1.2
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
+ALLOW_THROTTLE_BLEND = 0.2
 MIN_ALLOW_THROTTLE_SPEED = 2.5
+ALLOW_THROTTLE_SPEED_BLEND = 2.5
 LEAD_LOSS_HOLD_TIME = 0.5
 LEAD_LOSS_RELEASE_JERK = 1.0
 STOPPED_LEAD_DISTANCE = 3.0
@@ -48,7 +50,29 @@ def get_max_accel(v_ego):
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
 
-def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle,
+def get_throttle_authority(throttle_prob, v_ego):
+  """Return continuous authority for positive cruise acceleration."""
+  probability_authority = np.clip(
+    (throttle_prob - (ALLOW_THROTTLE_THRESHOLD - ALLOW_THROTTLE_BLEND / 2.0)) / ALLOW_THROTTLE_BLEND,
+    0.0, 1.0,
+  )
+  low_speed_authority = 1.0 - np.clip(
+    (v_ego - MIN_ALLOW_THROTTLE_SPEED) / ALLOW_THROTTLE_SPEED_BLEND,
+    0.0, 1.0,
+  )
+  return float(max(probability_authority, low_speed_authority))
+
+
+def smooth_min(values, softness=0.1):
+  """Conservative smooth minimum for continuous candidate arbitration."""
+  result = float(values[0])
+  for value in values[1:]:
+    value = float(value)
+    result = 0.5 * (result + value - math.sqrt((result - value) ** 2 + softness ** 2))
+  return result
+
+
+def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, throttle_authority,
                      speed_error_bias=0.0):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
 
@@ -57,10 +81,10 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
     a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
     a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
     max_accel = min(max_accel, a_x_allowed)
-    if not allow_throttle:
-      clipped_accel_coast = max(accel_coast, ACCEL_MIN)
-      coast_limit = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [max_accel, clipped_accel_coast])
-      max_accel = min(max_accel, coast_limit)
+    clipped_accel_coast = max(accel_coast, ACCEL_MIN)
+    coast_limit = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2],
+                            [max_accel, clipped_accel_coast])
+    max_accel = coast_limit + throttle_authority * (max_accel - coast_limit)
 
   target_accel = np.clip(v_cruise - v_ego + speed_error_bias, A_CRUISE_MIN, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
@@ -87,6 +111,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.fcw = False
     self.dt = dt
     self.allow_throttle = True
+    self.throttle_authority = 1.0
     self.is_crv_5g = self.CP.carFingerprint == CAR.HONDA_CRV_5G
 
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
@@ -127,6 +152,9 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     throttle_probs = sm['modelV2'].meta.disengagePredictions.gasPressProbs
     throttle_prob = throttle_probs[1] if len(throttle_probs) > 1 else 1.0
+    self.throttle_authority = get_throttle_authority(throttle_prob, v_ego)
+    # Keep the existing message field as a compatibility/display indicator. The
+    # planner uses throttle_authority continuously for the actual acceleration.
     self.allow_throttle = throttle_prob > ALLOW_THROTTLE_THRESHOLD or v_ego <= MIN_ALLOW_THROTTLE_SPEED
 
     steer_angle_without_offset = sm['carState'].steeringAngleDeg - sm['vehicleParameters'].angleOffsetDeg
@@ -176,18 +204,18 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     lead_present = any(lead.present for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo))
     use_crv_cruise_speed_i = self.is_crv_5g and not is_e2e and not lead_present \
-      and self.allow_throttle and v_ego >= CRV_CRUISE_SPEED_I_MIN_SPEED
+      and self.throttle_authority > 0.0 and v_ego >= CRV_CRUISE_SPEED_I_MIN_SPEED
     if use_crv_cruise_speed_i:
       speed_error = v_cruise - v_ego
       self.crv_cruise_speed_i = float(np.clip(
-        self.crv_cruise_speed_i + CRV_CRUISE_SPEED_I_GAIN * self.dt * speed_error,
+        self.crv_cruise_speed_i + CRV_CRUISE_SPEED_I_GAIN * self.dt * speed_error * self.throttle_authority,
         -CRV_CRUISE_SPEED_I_LIMIT, CRV_CRUISE_SPEED_I_LIMIT))
     else:
       self.crv_cruise_speed_i = 0.0
 
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                                     accel_coast, self.allow_throttle, self.crv_cruise_speed_i)
+                                     accel_coast, self.throttle_authority, self.crv_cruise_speed_i)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
@@ -195,7 +223,8 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     if is_e2e:
       candidates.append((output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e))
 
-    output_a_target, plan_source, _ = min(candidates, key=lambda c: c[0])
+    output_a_target = smooth_min([candidate[0] for candidate in candidates])
+    plan_source = min(candidates, key=lambda c: c[0])[1]
 
     if self.is_crv_5g and lead_present and plan_source in MPC_SOURCES:
       # A lead selected by the MPC can disappear for a few frames while tracker
