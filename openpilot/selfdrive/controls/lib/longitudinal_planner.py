@@ -244,6 +244,16 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       else:
         output_a_target = min(output_a_target, 0.0)
 
+    if self.is_crv_5g and tracked_leads:
+      # Do not accelerate toward a continuously tracked lead while the gap is
+      # below the existing desired following-distance boundary. The planner
+      # may coast or brake until the lead opens the gap again.
+      closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
+      desired_lead_distance = get_safe_obstacle_distance(v_ego, get_T_FOLLOW(sm['selfdriveState'].personality)) \
+        - get_stopped_equivalence_factor(max(closest_lead.vLead, 0.0))
+      if closest_lead.dRel < desired_lead_distance:
+        output_a_target = min(output_a_target, 0.0)
+
     close_closing_stop = self.is_crv_5g and crv_close_closing_should_stop(
       v_ego, (sm['radarState'].leadOne, sm['radarState'].leadTwo))
     if close_closing_stop:
