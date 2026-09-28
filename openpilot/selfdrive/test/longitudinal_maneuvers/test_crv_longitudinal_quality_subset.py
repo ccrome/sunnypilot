@@ -24,9 +24,14 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       crossing = q._crossing_time(rows, target, start)
       extreme = float(np.max(speed) if target > start else np.min(speed))
       error = extreme - target if target > start else target - extreme
-      if not math.isfinite(crossing) or error > 1.0:
+      settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
+      settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
+      settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+      if (not math.isfinite(crossing) or error > 1.0
+          or settled_duration < q.POST_TARGET_SETTLE_S or settled_error > 1.0):
         failures.append({"start_mph": start, "target_mph": target, "extreme_mph": extreme,
                          "error_mph": error, "crossing_s": crossing,
+                         "settled_duration_s": settled_duration, "settled_error_mph": settled_error,
                          "mode": rows[-1, 6], "transitions": int(rows[-1, 7])})
     assert not failures, f"CR-V subset speed failures: {failures}"
 

@@ -28,21 +28,21 @@ def _trace(spec):
     rows = q._run_speed_transition(start, target)
     label = f"Speed: {start} → {target} mph"
     values = (rows[:, 0], rows[:, 1], None, target, None, None, None,
-              rows[:, 2], rows[:, 8], rows[:, 3], rows[:, 5], rows[:, 6], rows[:, 7])
+              rows[:, 2], rows[:, 8], rows[:, 3], rows[:, 5], rows[:, 4], rows[:, 6], rows[:, 7])
   elif kind == "cruise":
     target, grade = spec[1:]
     rows = q._run_cruise(target, grade)
     label = f"Cruise: {target} mph at {grade:+d}%"
     values = (rows[:, 0], rows[:, 1], None, target, grade, None, None,
-              rows[:, 8], rows[:, 9], rows[:, 3], rows[:, 4], rows[:, 6], rows[:, 7])
+              rows[:, 8], rows[:, 9], rows[:, 3], rows[:, 4], rows[:, 5], rows[:, 6], rows[:, 7])
   else:
     ego, closing, stopped = spec[1:]
     rows = q._run_lead_case(ego, closing, stopped)
     label = f"Lead: {ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}"
     values = (rows[:, 0], rows[:, 1], rows[:, 5], ego, None, rows[:, 2], rows[:, 3],
-              rows[:, 4], rows[:, 6], rows[:, 7], rows[:, 8], rows[:, 10], rows[:, 11])
+              rows[:, 4], rows[:, 6], rows[:, 7], rows[:, 8], rows[:, 9], rows[:, 10], rows[:, 11])
 
-  time, ego, lead, target, grade, gap, time_gap, accel, planner_accel, gas, brake, mode, transitions = values
+  time, ego, lead, target, grade, gap, time_gap, accel, planner_accel, gas, brake, brake_request, mode, transitions = values
   def clean(value):
     if value is None:
       return None
@@ -50,7 +50,8 @@ def _trace(spec):
   return {"label": label, "time": clean(time), "ego": clean(ego), "lead": clean(lead),
           "target": target, "grade": grade, "gap": clean(gap), "time_gap": clean(time_gap),
           "accel": clean(accel), "planner_accel": clean(planner_accel), "gas": clean(gas),
-          "brake": clean(brake), "mode": list(mode), "transitions": clean(transitions)}
+          "brake": clean(brake), "brake_request": clean(brake_request), "mode": list(mode),
+          "transitions": clean(transitions)}
 
 
 HTML = r"""<!doctype html>
@@ -73,10 +74,10 @@ const traces=__TRACE_DATA__;
 const colors={ego:'#1769aa',lead:'#d35400',target:'#777',planner:'#7b1fa2',actual:'#00897b',gas:'#2e7d32',brake:'#c62828',gap:'#ef6c00',timegap:'#1565c0'};
 const $=id=>document.getElementById(id);
 traces.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.textContent=x.label;$('case').appendChild(o)});
-function draw(id, series, title, yLabel, dualAxis=false){
+function draw(id, series, title, yLabel, dualAxis=false, secondaryTitle=''){
  const t=traces[$('case').value], active=series.filter(s=>s.data!==null);
  const layout={title:{text:title,x:0.02,xanchor:'left'},height:320,margin:{l:65,r:dualAxis?70:25,t:45,b:55},hovermode:'x unified',showlegend:true,paper_bgcolor:'white',plot_bgcolor:'white',xaxis:{title:'time (s)',showgrid:true,gridcolor:'#e5e5e5'},yaxis:{title:yLabel,showgrid:true,gridcolor:'#e5e5e5'}};
- if(dualAxis) layout.yaxis2={title:'time gap (s)',overlaying:'y',side:'right',showgrid:false};
+ if(dualAxis) layout.yaxis2={title:secondaryTitle,overlaying:'y',side:'right',showgrid:false};
  if(!active.length) layout.annotations=[{text:'No lead trace for this case',showarrow:false,font:{size:16,color:'#666'},xref:'paper',yref:'paper',x:0.5,y:0.5}];
  const data=active.map(s=>({x:t.time,y:s.data,name:s.name,type:'scatter',mode:'lines',connectgaps:false,line:{color:s.color,width:2},...(s.axis?{yaxis:s.axis}:{})}));
  Plotly.react(id,data,layout,{responsive:true,displaylogo:false});
@@ -84,8 +85,8 @@ function draw(id, series, title, yLabel, dualAxis=false){
 function render(){const t=traces[$('case').value];$('meta').innerHTML=`<b>${t.label}</b> &nbsp; final mode: ${t.mode[t.mode.length-1]} &nbsp; mode transitions: ${t.transitions[t.transitions.length-1]}${t.grade===null?'':` &nbsp; grade: ${t.grade}%`}`;
  draw('speed',[{name:'ego mph',data:t.ego,color:colors.ego},{name:'lead mph',data:t.lead,color:colors.lead},{name:'target mph',data:t.time.map(()=>t.target),color:colors.target}],'Speed','mph');
  draw('accel',[{name:'planner m/s²',data:t.planner_accel,color:colors.planner},{name:'physical m/s²',data:t.accel,color:colors.actual}],'Acceleration','m/s²');
- draw('actuator',[{name:'gas 0–1',data:t.gas,color:colors.gas},{name:'brake 0–1',data:t.brake,color:colors.brake}],'Honda actuator requests','normalized');
- draw('gap',[{name:'gap m',data:t.gap,color:colors.gap},{name:'time gap s',data:t.time_gap,color:colors.timegap,axis:'y2'}],'Lead gap','gap (m)',true);}
+ draw('actuator',[{name:'gas command 0–1',data:t.gas,color:colors.gas},{name:'brake request',data:t.brake_request,color:colors.brake},{name:'brake intensity 0–1',data:t.brake,color:'#8e24aa'},{name:'mode (gas=1, coast=0, brake=-1)',data:t.mode.map(m=>m==='gas'?1:m==='brake'?-1:0),color:'#455a64',axis:'y2'}],'Honda gas / coast / brake commands','command (normalized)',true,'mode');
+ draw('gap',[{name:'gap m',data:t.gap,color:colors.gap},{name:'time gap s',data:t.time_gap,color:colors.timegap,axis:'y2'}],'Lead gap','gap (m)',true,'time gap (s)');}
 $('case').onchange=render;render();
 </script></body></html>"""
 

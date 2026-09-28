@@ -23,12 +23,16 @@ MPH = CV.MPH_TO_MS
 SIM_RATE = 20.0
 DT = 1.0 / SIM_RATE
 TARGET_GAP = 2.05
+POST_TARGET_SETTLE_S = 60.0
 
 
 def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
   plant = Plant(speed=start_mph * MPH, physics=True, realtime=False,
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
-  duration = max(30.0, 15.0 + abs(target_mph - start_mph) * 0.40)
+  # Keep the trace alive well beyond the crossing.  The quality gate must see
+  # the complete post-transition behavior, not just the instant the target is
+  # first reached.
+  duration = max(120.0, 15.0 + abs(target_mph - start_mph) * 0.40 + POST_TARGET_SETTLE_S)
   rows = []
   while plant.current_time < duration:
     plant.step(v_cruise=target_mph * MPH)
@@ -47,7 +51,9 @@ def _crossing_time(rows: np.ndarray, target_mph: float, start_mph: float) -> flo
 def _run_cruise(target_mph: float, grade_percent: int) -> np.ndarray:
   plant = Plant(speed=0.0, physics=True, realtime=False,
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
-  duration = 75.0
+  # The cruise matrix also needs a full post-target stability window.  The
+  # longest acceleration in this matrix reaches target before this budget.
+  duration = 120.0
   rows = []
   pitch = math.atan(grade_percent / 100.0)
   while plant.current_time < duration:
@@ -92,9 +98,14 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       speed = rows[:, 1].astype(float)
       crossing = _crossing_time(rows, target, 0)
       peak = float(np.max(speed))
-      if not math.isfinite(crossing) or peak - target > 1.0:
+      settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
+      settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
+      settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+      if (not math.isfinite(crossing) or peak - target > 1.0
+          or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0):
         failures.append({"direction": "up", "target_mph": target, "peak_mph": peak,
                          "crossing_s": crossing, "reached_target": math.isfinite(crossing),
+                         "settled_duration_s": settled_duration, "settled_error_mph": settled_error,
                          "mode": rows[-1, 6],
                          "transitions": int(rows[-1, 7])})
 
@@ -103,9 +114,14 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       speed = rows[:, 1].astype(float)
       crossing = _crossing_time(rows, target, 90)
       trough = float(np.min(speed))
-      if not math.isfinite(crossing) or target - trough > 1.0:
+      settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
+      settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
+      settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+      if (not math.isfinite(crossing) or target - trough > 1.0
+          or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0):
         failures.append({"direction": "down", "target_mph": target, "trough_mph": trough,
                          "crossing_s": crossing, "reached_target": math.isfinite(crossing),
+                         "settled_duration_s": settled_duration, "settled_error_mph": settled_error,
                          "mode": rows[-1, 6],
                          "transitions": int(rows[-1, 7])})
     assert not failures, f"CR-V speed-transition failures: {failures}"
