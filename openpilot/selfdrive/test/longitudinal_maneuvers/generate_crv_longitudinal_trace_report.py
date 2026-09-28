@@ -55,39 +55,37 @@ def _trace(spec):
 
 HTML = r"""<!doctype html>
 <html><head><meta charset="utf-8"><title>CR-V longitudinal traces</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
 body{font:14px system-ui,sans-serif;margin:24px;color:#222;background:#fafafa}
-select{font:16px;padding:6px;min-width:420px} canvas{display:block;width:100%;max-width:1100px;height:220px;background:white;border:1px solid #ccc;margin:12px 0 22px}
+select{font:16px;padding:6px;min-width:420px}.plot{width:100%;max-width:1100px;height:320px;background:white;border:1px solid #ccc;margin:12px 0 22px}
 .meta{background:white;border:1px solid #ddd;padding:10px;max-width:1080px}.legend span{margin-right:18px}.swatch{display:inline-block;width:12px;height:12px;margin-right:4px}
 </style></head><body>
 <h1>CR-V longitudinal quality traces</h1>
 <p>Select a representative case to inspect the actual closed-loop signals. Gas is normalized 0–1 from the Honda Bosch 0–1600 command; brake is normalized from the commanded negative acceleration.</p>
 <select id="case"></select><div class="meta" id="meta"></div>
-<canvas id="speed" width="1100" height="220"></canvas>
-<canvas id="accel" width="1100" height="220"></canvas>
-<canvas id="actuator" width="1100" height="220"></canvas>
-<canvas id="gap" width="1100" height="220"></canvas>
+<div id="speed" class="plot"></div>
+<div id="accel" class="plot"></div>
+<div id="actuator" class="plot"></div>
+<div id="gap" class="plot"></div>
 <script>
 const traces=__TRACE_DATA__;
 const colors={ego:'#1769aa',lead:'#d35400',target:'#777',planner:'#7b1fa2',actual:'#00897b',gas:'#2e7d32',brake:'#c62828',gap:'#ef6c00',timegap:'#1565c0'};
 const $=id=>document.getElementById(id);
 traces.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.textContent=x.label;$('case').appendChild(o)});
-function finite(v){return v!==null&&Number.isFinite(v)}
-function draw(id, series, title, yLabel){
- const c=$(id),ctx=c.getContext('2d'),w=c.width,h=c.height,p={l:58,r:18,t:28,b:30};ctx.clearRect(0,0,w,h);
- const active=series.filter(s=>s.data!==null), t=traces[$('case').value], xs=t.time; let vals=[]; active.forEach(s=>s.data.forEach(v=>{if(finite(v))vals.push(v)}));
- if(!vals.length){ctx.fillStyle='#666';ctx.font='16px system-ui';ctx.fillText('No lead trace for this case',p.l,60);return} let lo=Math.min(...vals),hi=Math.max(...vals);if(lo===hi){lo-=1;hi+=1}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;
- const x=v=>p.l+(v-xs[0])/(xs[xs.length-1]-xs[0])*(w-p.l-p.r), y=v=>h-p.b-(v-lo)/(hi-lo)*(h-p.t-p.b);
- ctx.strokeStyle='#ddd';ctx.fillStyle='#555';ctx.font='12px system-ui';ctx.beginPath();ctx.moveTo(p.l,p.t);ctx.lineTo(p.l,h-p.b);ctx.lineTo(w-p.r,h-p.b);ctx.stroke();
- ctx.fillText(title,p.l,17);ctx.fillText(yLabel,4,p.t+10);ctx.fillText(lo.toFixed(2),4,h-p.b);ctx.fillText(hi.toFixed(2),4,p.t+4);ctx.fillText('time (s)',w-70,h-8);
- active.forEach(s=>{ctx.strokeStyle=s.color;ctx.lineWidth=2;ctx.beginPath();let on=false;s.data.forEach((v,i)=>{if(!finite(v)){on=false;return}const X=x(xs[i]),Y=y(v);if(!on)ctx.moveTo(X,Y);else ctx.lineTo(X,Y);on=true});ctx.stroke()});
- const lx=p.l+8;active.forEach((s,i)=>{ctx.fillStyle=s.color;ctx.fillRect(lx+i*145,h-18,10,10);ctx.fillStyle='#333';ctx.fillText(s.name,lx+14+i*145,h-8)});
+function draw(id, series, title, yLabel, dualAxis=false){
+ const t=traces[$('case').value], active=series.filter(s=>s.data!==null);
+ const layout={title:{text:title,x:0.02,xanchor:'left'},height:320,margin:{l:65,r:dualAxis?70:25,t:45,b:55},hovermode:'x unified',showlegend:true,paper_bgcolor:'white',plot_bgcolor:'white',xaxis:{title:'time (s)',showgrid:true,gridcolor:'#e5e5e5'},yaxis:{title:yLabel,showgrid:true,gridcolor:'#e5e5e5'}};
+ if(dualAxis) layout.yaxis2={title:'time gap (s)',overlaying:'y',side:'right',showgrid:false};
+ if(!active.length) layout.annotations=[{text:'No lead trace for this case',showarrow:false,font:{size:16,color:'#666'},xref:'paper',yref:'paper',x:0.5,y:0.5}];
+ const data=active.map(s=>({x:t.time,y:s.data,name:s.name,type:'scatter',mode:'lines',connectgaps:false,line:{color:s.color,width:2},...(s.axis?{yaxis:s.axis}:{})}));
+ Plotly.react(id,data,layout,{responsive:true,displaylogo:false});
 }
 function render(){const t=traces[$('case').value];$('meta').innerHTML=`<b>${t.label}</b> &nbsp; final mode: ${t.mode[t.mode.length-1]} &nbsp; mode transitions: ${t.transitions[t.transitions.length-1]}${t.grade===null?'':` &nbsp; grade: ${t.grade}%`}`;
  draw('speed',[{name:'ego mph',data:t.ego,color:colors.ego},{name:'lead mph',data:t.lead,color:colors.lead},{name:'target mph',data:t.time.map(()=>t.target),color:colors.target}],'Speed','mph');
  draw('accel',[{name:'planner m/s²',data:t.planner_accel,color:colors.planner},{name:'physical m/s²',data:t.accel,color:colors.actual}],'Acceleration','m/s²');
  draw('actuator',[{name:'gas 0–1',data:t.gas,color:colors.gas},{name:'brake 0–1',data:t.brake,color:colors.brake}],'Honda actuator requests','normalized');
- draw('gap',[{name:'gap m',data:t.gap,color:colors.gap},{name:'time gap s',data:t.time_gap,color:colors.timegap}],'Lead gap','mixed units');}
+ draw('gap',[{name:'gap m',data:t.gap,color:colors.gap},{name:'time gap s',data:t.time_gap,color:colors.timegap,axis:'y2'}],'Lead gap','gap (m)',true);}
 $('case').onchange=render;render();
 </script></body></html>"""
 
