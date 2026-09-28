@@ -34,7 +34,7 @@ def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
     plant.step(v_cruise=target_mph * MPH)
     rows.append((plant.current_time, plant.speed / MPH, plant.acceleration,
                  plant.gas_command, float(plant.brake_request), plant.brake_intensity,
-                 plant.actuator_mode, plant.mode_transitions))
+                 plant.actuator_mode, plant.mode_transitions, plant.planner_acceleration))
   return np.asarray(rows, dtype=object)
 
 
@@ -54,7 +54,8 @@ def _run_cruise(target_mph: float, grade_percent: int) -> np.ndarray:
     plant.step(v_cruise=target_mph * MPH, pitch=pitch)
     rows.append((plant.current_time, plant.speed / MPH, grade_percent,
                  plant.gas_command, plant.brake_intensity, plant.brake_request,
-                 plant.actuator_mode, plant.mode_transitions, plant.acceleration))
+                 plant.actuator_mode, plant.mode_transitions, plant.acceleration,
+                 plant.planner_acceleration))
   return np.asarray(rows, dtype=object)
 
 
@@ -77,7 +78,9 @@ def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool) -> np.ndar
     gap = max(0.0, plant.distance_lead - plant.distance)
     time_gap = gap / max(plant.speed, 0.1)
     rows.append((plant.current_time, plant.speed / MPH, gap, time_gap,
-                 plant.acceleration, plant.actuator_mode, plant.mode_transitions))
+                 plant.acceleration, lead_speed / MPH, plant.planner_acceleration,
+                 plant.gas_command, plant.brake_intensity, plant.brake_request,
+                 plant.actuator_mode, plant.mode_transitions))
   return np.asarray(rows, dtype=object)
 
 
