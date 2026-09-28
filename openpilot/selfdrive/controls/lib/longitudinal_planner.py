@@ -67,6 +67,7 @@ CRV_LEAD_FOLLOW_BRAKE_HOLD_TIME = 0.5
 # boundary; the plant/actuator delay otherwise allows an unsafe time-gap
 # collapse even though the override technically fires.
 CRV_LEAD_FOLLOW_SAFETY_TTC = 4.0
+CRV_LEAD_FOLLOW_INTERCEPT_TAU = 4.0
 CRV_LEAD_FOLLOW_MIN_CLOSING_TIME_GAP = 1.25
 # Reference-drive p10 time gap is 1.38 s against a 2.05 s target.
 CRV_LEAD_FOLLOW_CLOSE_TOLERANCE = 0.65
@@ -348,7 +349,8 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       target_follow_distance = max(2.0, v_ego * t_follow)
       closing_speed = max(-closest_lead.vRel, 0.0)
       distance_to_target = closest_lead.dRel - target_follow_distance
-      predicted_brake = -(closing_speed ** 2) / (2.0 * max(distance_to_target, 1.0))
+      desired_closing_speed = max(distance_to_target, 0.0) / CRV_LEAD_FOLLOW_INTERCEPT_TAU
+      predicted_brake = -(closing_speed - desired_closing_speed) / CRV_LEAD_FOLLOW_INTERCEPT_TAU
       closing_confidence = sigmoid((closing_speed - 0.5) / 0.25)
       predictive_limit = ((1.0 - closing_confidence) * ACCEL_MAX
                           + closing_confidence * np.clip(predicted_brake, ACCEL_MIN, 0.0))
