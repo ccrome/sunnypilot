@@ -25,6 +25,7 @@ DT = 1.0 / SIM_RATE
 TARGET_GAP = 2.05
 POST_TARGET_SETTLE_S = 60.0
 RUN_DURATION_S = 120.0
+COMMAND_DERIVATIVE_P95_MAX = 0.001
 
 
 def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
@@ -70,6 +71,10 @@ def _p95_jerk(rows: np.ndarray) -> float:
   return float(np.percentile(np.abs(np.gradient(rows[:, 8].astype(float), DT)), 95))
 
 
+def _p95_command_derivative(values: np.ndarray) -> float:
+  return float(np.percentile(np.abs(np.gradient(values.astype(float), DT)), 95))
+
+
 def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool) -> np.ndarray:
   ego = ego_mph * MPH
   closing = closing_mph * MPH
@@ -102,11 +107,15 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
       settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
       settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+      gas_d_p95 = _p95_command_derivative(settled[:, 3]) if len(settled) else math.inf
+      brake_d_p95 = _p95_command_derivative(settled[:, 5]) if len(settled) else math.inf
       if (not math.isfinite(crossing) or peak - target > 1.0
-          or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0):
+          or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0
+          or gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX or brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX):
         failures.append({"direction": "up", "target_mph": target, "peak_mph": peak,
                          "crossing_s": crossing, "reached_target": math.isfinite(crossing),
                          "settled_duration_s": settled_duration, "settled_error_mph": settled_error,
+                         "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
                          "mode": rows[-1, 6],
                          "transitions": int(rows[-1, 7])})
 
@@ -118,11 +127,15 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
       settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
       settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+      gas_d_p95 = _p95_command_derivative(settled[:, 3]) if len(settled) else math.inf
+      brake_d_p95 = _p95_command_derivative(settled[:, 5]) if len(settled) else math.inf
       if (not math.isfinite(crossing) or target - trough > 1.0
-          or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0):
+          or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0
+          or gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX or brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX):
         failures.append({"direction": "down", "target_mph": target, "trough_mph": trough,
                          "crossing_s": crossing, "reached_target": math.isfinite(crossing),
                          "settled_duration_s": settled_duration, "settled_error_mph": settled_error,
+                         "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
                          "mode": rows[-1, 6],
                          "transitions": int(rows[-1, 7])})
     assert not failures, f"CR-V speed-transition failures: {failures}"
@@ -140,14 +153,18 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
         speed_error = float(np.max(np.abs(speed - target)))
         gas_span = float(np.ptp(gas))
         brake_span = float(np.ptp(brake))
+        gas_d_p95 = _p95_command_derivative(settled[:, 3])
+        brake_d_p95 = _p95_command_derivative(settled[:, 4])
         mode_transitions = int(settled[-1, 7]) - int(settled[0, 7])
         # A mode can change once while a grade/load transition is absorbed;
         # repeated gas/brake alternation is the quality failure.
         if (speed_error > 1.0 or gas_span > 0.05 or brake_span > 0.05
-            or mode_transitions > 2):
+            or mode_transitions > 2 or gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX
+            or brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX):
           failures.append({"speed_mph": target, "grade_percent": grade,
                            "settled_mode": str(modes[-1]), "speed_error_mph": speed_error,
                            "gas_span": gas_span, "brake_intensity_span": brake_span,
+                           "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
                            "transition_count": mode_transitions, "jerk_p95": _p95_jerk(settled)})
     assert not failures, f"CR-V steady-cruise failures: {failures}"
 
@@ -171,6 +188,8 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
                            RUN_DURATION_S - POST_TARGET_SETTLE_S)
           tail = rows[t >= tail_start] if math.isfinite(tail_start) else rows[:0]
           tail_gap_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+          tail_gas_d_p95 = _p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
+          tail_brake_d_p95 = _p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
           tail_mode_transitions = (int(tail[-1, 11]) - int(tail[0, 11])) if len(tail) else math.inf
           tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - TARGET_GAP)))
                                if len(tail) else math.inf)
@@ -178,11 +197,15 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
                      or not stopped and tail_gap_span <= 0.05 and tail_target_error <= 0.25)
           if (min_gap < 1.0 or recover_time > 15.0 or later_min < recovery_gap - 1e-3
               or len(tail) == 0 or tail[-1, 0] - tail[0, 0] < POST_TARGET_SETTLE_S
-              or not settled or tail_mode_transitions > 2):
+              or not settled or tail_mode_transitions > 2
+              or tail_gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX
+              or tail_brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX):
             failures.append({"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                              "minimum_time_gap_s": min_gap, "recovery_s": recover_time,
                              "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
                              "settled_target_s": TARGET_GAP, "settled_gap_span_s": tail_gap_span,
                              "settled_target_error_s": tail_target_error,
+                             "gas_derivative_p95": tail_gas_d_p95,
+                             "brake_derivative_p95": tail_brake_d_p95,
                              "settled_mode_transitions": tail_mode_transitions})
     assert not failures, f"CR-V fast-closing lead failures: {failures}"

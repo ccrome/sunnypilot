@@ -12,10 +12,12 @@ from pathlib import Path
 import numpy as np
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quality_regression import (
+  COMMAND_DERIVATIVE_P95_MAX,
   TARGET_GAP,
   POST_TARGET_SETTLE_S,
   RUN_DURATION_S,
   _p95_jerk,
+  _p95_command_derivative,
   _run_cruise,
   _run_lead_case,
   _run_speed_transition,
@@ -46,9 +48,14 @@ def _speed_row(start, target):
   settled = data[data[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else data[:0]
   settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
   settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
-  passed = passed and settled_duration >= POST_TARGET_SETTLE_S and settled_error <= 1.0
+  gas_d_p95 = _p95_command_derivative(settled[:, 3]) if len(settled) else math.inf
+  brake_d_p95 = _p95_command_derivative(settled[:, 5]) if len(settled) else math.inf
+  passed = (passed and settled_duration >= POST_TARGET_SETTLE_S and settled_error <= 1.0
+            and gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
+            and brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
   metrics.update({"crossing_s": crossing, "settled_duration_s": settled_duration,
-                  "settled_error_mph": settled_error, "mode": data[-1, 6],
+                  "settled_error_mph": settled_error, "gas_derivative_p95": gas_d_p95,
+                  "brake_derivative_p95": brake_d_p95, "mode": data[-1, 6],
                   "transitions": int(data[-1, 7])})
   return row(kind, case, passed, metrics)
 
@@ -62,12 +69,17 @@ def _cruise_row(target, grade):
   speed_error = float(np.max(np.abs(speed - target)))
   gas_span = float(np.ptp(gas))
   brake_span = float(np.ptp(brake))
+  gas_d_p95 = _p95_command_derivative(settled[:, 3])
+  brake_d_p95 = _p95_command_derivative(settled[:, 4])
   transitions = int(settled[-1, 7]) - int(settled[0, 7])
-  passed = speed_error <= 1.0 and gas_span <= 0.05 and brake_span <= 0.05 and transitions <= 2
+  passed = (speed_error <= 1.0 and gas_span <= 0.05 and brake_span <= 0.05 and transitions <= 2
+            and gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
+            and brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
   return row("Cruise", f"{target} mph @ {grade:+d}%", passed,
              {"target_mph": target, "grade_percent": grade, "settled_mode": settled[-1, 6],
               "speed_error_mph": speed_error, "gas_span": gas_span,
               "brake_intensity_span": brake_span, "transition_count": transitions,
+              "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
               "jerk_p95": _p95_jerk(settled)})
 
 
@@ -86,6 +98,8 @@ def _lead_row(ego, closing, stopped):
                    RUN_DURATION_S - POST_TARGET_SETTLE_S)
   tail = data[times >= tail_start] if math.isfinite(tail_start) else data[:0]
   tail_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+  tail_gas_d_p95 = _p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
+  tail_brake_d_p95 = _p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
   tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - TARGET_GAP)))
                        if len(tail) else math.inf)
   tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
@@ -93,14 +107,18 @@ def _lead_row(ego, closing, stopped):
              or not stopped and tail_span <= 0.05 and tail_target_error <= 0.25)
   passed = (min_gap >= 1.0 and recovery_s <= 15.0 and later_min >= recovery_gap - 1e-3
             and len(tail) > 0 and tail[-1, 0] - tail[0, 0] >= POST_TARGET_SETTLE_S
-            and settled and tail_transitions <= 2)
+            and settled and tail_transitions <= 2
+            and tail_gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
+            and tail_brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
   return row("Lead", f"{ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}",
              passed, {"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                       "minimum_time_gap_s": min_gap, "recovery_s": recovery_s,
                       "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
                       "target_gap_s": TARGET_GAP, "settled_gap_span_s": tail_span,
                       "settled_target_error_s": tail_target_error,
-                      "settled_mode_transitions": tail_transitions})
+                      "settled_mode_transitions": tail_transitions,
+                      "gas_derivative_p95": tail_gas_d_p95,
+                      "brake_derivative_p95": tail_brake_d_p95})
 
 
 def run_matrix():

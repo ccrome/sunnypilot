@@ -43,11 +43,16 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       speed_error = float(np.max(np.abs(settled[:, 1].astype(float) - target)))
       gas_span = float(np.ptp(settled[:, 3].astype(float)))
       brake_span = float(np.ptp(settled[:, 4].astype(float)))
+      gas_d_p95 = q._p95_command_derivative(settled[:, 3])
+      brake_d_p95 = q._p95_command_derivative(settled[:, 4])
       transitions = int(settled[-1, 7]) - int(settled[0, 7])
-      if speed_error > 1.0 or gas_span > 0.05 or brake_span > 0.05 or transitions > 2:
+      if (speed_error > 1.0 or gas_span > 0.05 or brake_span > 0.05 or transitions > 2
+          or gas_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX
+          or brake_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX):
         failures.append({"target_mph": target, "grade_percent": grade,
                          "speed_error_mph": speed_error, "gas_span": gas_span,
                          "brake_span": brake_span, "transitions": transitions,
+                         "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
                          "jerk_p95": q._p95_jerk(settled)})
     assert not failures, f"CR-V subset cruise failures: {failures}"
 
@@ -70,6 +75,8 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
                        q.RUN_DURATION_S - q.POST_TARGET_SETTLE_S)
       tail = rows[times >= tail_start] if math.isfinite(tail_start) else rows[:0]
       tail_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+      tail_gas_d_p95 = q._p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
+      tail_brake_d_p95 = q._p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
       tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
       tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - q.TARGET_GAP)))
                            if len(tail) else math.inf)
@@ -77,10 +84,14 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
                  or not stopped and tail_span <= 0.05 and tail_target_error <= 0.25)
       if (min_gap < 1.0 or recovery_s > 15.0 or later_min < recovery_gap - 1e-3
           or len(tail) == 0 or tail[-1, 0] - tail[0, 0] < q.POST_TARGET_SETTLE_S
-          or not settled or tail_transitions > 2):
+          or not settled or tail_transitions > 2
+          or tail_gas_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX
+          or tail_brake_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX):
         failures.append({"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                          "minimum_time_gap_s": min_gap, "recovery_s": recovery_s,
                          "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
                          "settled_gap_span_s": tail_span, "settled_target_error_s": tail_target_error,
-                         "settled_mode_transitions": tail_transitions})
+                         "settled_mode_transitions": tail_transitions,
+                         "gas_derivative_p95": tail_gas_d_p95,
+                         "brake_derivative_p95": tail_brake_d_p95})
     assert not failures, f"CR-V subset lead failures: {failures}"

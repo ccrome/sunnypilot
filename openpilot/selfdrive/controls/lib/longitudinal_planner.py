@@ -37,11 +37,11 @@ CRV_CLOSE_STOP_DISTANCE = 2.5
 CRV_CLOSE_STOP_CLOSING_SPEED = 0.2
 CRV_CLOSE_STOP_MIN_SPEED = 0.3
 CRV_CRUISE_SPEED_I_MIN_SPEED = 5.0
-CRV_CRUISE_SPEED_I_GAIN = 0.03
-CRV_CRUISE_SPEED_I_LIMIT = 0.15
+CRV_CRUISE_SPEED_I_GAIN = 0.02
+CRV_CRUISE_SPEED_I_LIMIT = 0.05
 # A one-second speed-error response overshoots the CR-V after actuator delay;
 # this slower reference is still fast enough for normal set-speed changes.
-CRV_CRUISE_SPEED_GAIN = 0.10
+CRV_CRUISE_SPEED_GAIN = 0.11
 CRV_GRADE_ACCEL_GAIN = 9.81 / 5.65
 # Fitted toward the several-second correlation of lead speed/gap in the CR-V
 # reference drive. Safety/TTC and stop paths below remain immediate.
