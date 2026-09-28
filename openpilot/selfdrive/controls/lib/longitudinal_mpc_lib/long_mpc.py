@@ -71,11 +71,13 @@ def get_jerk_factor(personality=log.LongitudinalPersonality.standard):
 
 def get_T_FOLLOW(personality=log.LongitudinalPersonality.standard):
   if personality==log.LongitudinalPersonality.relaxed:
-    return 1.75
+    # Fitted to the median following time in the CR-V reference drive
+    # (0000005c--3c70bb383d: 2.03 s), rounded to a stable target.
+    return 2.05
   elif personality==log.LongitudinalPersonality.standard:
-    return 1.45
+    return 1.70
   elif personality==log.LongitudinalPersonality.aggressive:
-    return 1.25
+    return 1.50
   else:
     raise NotImplementedError("Longitudinal personality not supported")
 

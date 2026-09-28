@@ -39,6 +39,37 @@ CRV_CLOSE_STOP_MIN_SPEED = 0.3
 CRV_CRUISE_SPEED_I_MIN_SPEED = 5.0
 CRV_CRUISE_SPEED_I_GAIN = 0.03
 CRV_CRUISE_SPEED_I_LIMIT = 0.15
+# Fitted toward the several-second correlation of lead speed/gap in the CR-V
+# reference drive. Safety/TTC and stop paths below remain immediate.
+# The reference drives accept several seconds of lead-speed variation instead
+# of chasing every change; use a slower speed reference than gap correction.
+CRV_LEAD_FOLLOW_SPEED_TAU_PER_FOLLOW = 2.5
+CRV_LEAD_FOLLOW_SPEED_RESPONSE = 0.55
+CRV_LEAD_FOLLOW_GAP_TAU_PER_FOLLOW = 1.5
+CRV_LEAD_FOLLOW_ACCEL_TAU_PER_FOLLOW = 0.75
+CRV_LEAD_FOLLOW_OUTPUT_TAU = 2.00
+CRV_LEAD_FOLLOW_I_GAIN = 0.02
+CRV_LEAD_FOLLOW_I_LIMIT = 0.15
+# Mild MPC deceleration is part of ordinary lead-speed regulation and is
+# handled by the filtered reference. Only a clearly meaningful raw brake
+# request (or an explicit stop decision) bypasses that reference.
+CRV_LEAD_FOLLOW_BRAKE_OVERRIDE = -0.20
+CRV_LEAD_FOLLOW_GAP_HYSTERESIS = 0.5
+CRV_POST_RESTART_GAP_RELEASE_MARGIN = 1.0
+CRV_LEAD_FOLLOW_BRAKE_HOLD_TIME = 0.5
+# Engage predictive braking well before the closing lead reaches the old 4 s TTC
+# boundary; the plant/actuator delay otherwise allows an unsafe time-gap
+# collapse even though the override technically fires.
+CRV_LEAD_FOLLOW_SAFETY_TTC = 10.0
+CRV_LEAD_FOLLOW_MIN_CLOSING_TIME_GAP = 1.25
+# Reference-drive p10 time gap is 1.38 s against a 2.05 s target.
+CRV_LEAD_FOLLOW_CLOSE_TOLERANCE = 0.65
+CRV_LEAD_FOLLOW_FAR_TOLERANCE = 0.50
+CRV_LEAD_FOLLOW_CLOSE_RECOVERY_TAU = 10.0
+CRV_LEAD_FOLLOW_FAR_RECOVERY_TAU = 5.0
+CRV_LEAD_FOLLOW_TIME_ERROR_GAIN = 0.10
+CRV_LEAD_FOLLOW_BIAS_LIMIT = 2.0
+CRV_LEAD_FOLLOW_COAST_DOWN_ACCEL = -0.15
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -70,6 +101,12 @@ def smooth_min(values, softness=0.1):
     value = float(value)
     result = 0.5 * (result + value - math.sqrt((result - value) ** 2 + softness ** 2))
   return result
+
+
+def sigmoid(value):
+  """Numerically stable continuous confidence/pressure mapping."""
+  value = float(np.clip(value, -60.0, 60.0))
+  return 1.0 / (1.0 + math.exp(-value))
 
 
 def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, throttle_authority,
@@ -119,10 +156,22 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.output_a_target = init_a
     self.output_should_stop = False
     self.crv_cruise_speed_i = 0.0
+    self.crv_lead_follow_speed = init_v
+    self.crv_lead_follow_gap = 0.0
+    self.crv_lead_follow_i = 0.0
+    self.crv_lead_follow_accel = init_a
+    self.crv_lead_follow_time_gap = 0.0
+    self.crv_lead_follow_time_error = 0.0
+    self.crv_lead_follow_bias = 0.0
+    self.crv_lead_follow_predictive_brake = 0.0
+    self.crv_lead_follow_safety_override = False
+    self.crv_lead_follow_brake_hold_remaining = 0.0
+    self.crv_lead_gap_protection = False
     self.lead_loss_hold_remaining = 0.0
     self.lead_loss_hold_accel = 0.0
     self.stopped_lead_loss_hold_remaining = 0.0
     self.crv_post_restart_gap_hold = False
+    self.crv_post_restart_gap_armed = False
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -164,9 +213,21 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
       self.crv_cruise_speed_i = 0.0
+      self.crv_lead_follow_speed = v_ego
+      self.crv_lead_follow_gap = 0.0
+      self.crv_lead_follow_i = 0.0
+      self.crv_lead_follow_accel = 0.0
+      self.crv_lead_follow_time_gap = 0.0
+      self.crv_lead_follow_time_error = 0.0
+      self.crv_lead_follow_bias = 0.0
+      self.crv_lead_follow_predictive_brake = 0.0
+      self.crv_lead_follow_safety_override = False
+      self.crv_lead_follow_brake_hold_remaining = 0.0
+      self.crv_lead_gap_protection = False
       self.lead_loss_hold_remaining = 0.0
       self.stopped_lead_loss_hold_remaining = 0.0
       self.crv_post_restart_gap_hold = False
+      self.crv_post_restart_gap_armed = False
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -218,13 +279,121 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
                                      accel_coast, self.throttle_authority, self.crv_cruise_speed_i)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
-    candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
+    tracked_leads = [lead for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo) if lead.present]
+    lead_follow_active = self.is_crv_5g and bool(tracked_leads) and not is_e2e
+    if lead_follow_active:
+      # Use the lead as a slowly varying speed reference for normal following.
+      # The raw MPC remains available below as an immediate safety override.
+      closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
+      t_follow = get_T_FOLLOW(sm['selfdriveState'].personality)
+      speed_tau = CRV_LEAD_FOLLOW_SPEED_TAU_PER_FOLLOW * t_follow
+      gap_tau = CRV_LEAD_FOLLOW_GAP_TAU_PER_FOLLOW * t_follow
+      accel_tau = CRV_LEAD_FOLLOW_ACCEL_TAU_PER_FOLLOW * t_follow
+      speed_alpha = self.dt / (speed_tau + self.dt)
+      gap_alpha = self.dt / (gap_tau + self.dt)
+      self.crv_lead_follow_speed += speed_alpha * (closest_lead.vLead - self.crv_lead_follow_speed)
+      self.crv_lead_follow_gap += gap_alpha * (closest_lead.dRel - self.crv_lead_follow_gap)
+      self.crv_lead_follow_time_gap = self.crv_lead_follow_gap / max(v_ego, 1.0)
+      close_boundary = t_follow - CRV_LEAD_FOLLOW_CLOSE_TOLERANCE
+      far_boundary = t_follow + CRV_LEAD_FOLLOW_FAR_TOLERANCE
+      if self.crv_lead_follow_time_gap < close_boundary:
+        time_error = self.crv_lead_follow_time_gap - close_boundary
+        recovery_tau = CRV_LEAD_FOLLOW_CLOSE_RECOVERY_TAU
+      elif self.crv_lead_follow_time_gap > far_boundary:
+        time_error = self.crv_lead_follow_time_gap - far_boundary
+        recovery_tau = CRV_LEAD_FOLLOW_FAR_RECOVERY_TAU
+      else:
+        time_error = 0.0
+        recovery_tau = CRV_LEAD_FOLLOW_CLOSE_RECOVERY_TAU if self.crv_lead_follow_bias < 0.0 \
+          else CRV_LEAD_FOLLOW_FAR_RECOVERY_TAU
+      self.crv_lead_follow_time_error = time_error
+      bias_target = np.clip(
+        CRV_LEAD_FOLLOW_TIME_ERROR_GAIN * v_ego * time_error,
+        -CRV_LEAD_FOLLOW_BIAS_LIMIT, CRV_LEAD_FOLLOW_BIAS_LIMIT)
+      bias_alpha = self.dt / (recovery_tau + self.dt)
+      self.crv_lead_follow_bias += bias_alpha * (bias_target - self.crv_lead_follow_bias)
+      lead_speed_target = self.crv_lead_follow_speed + self.crv_lead_follow_bias
+      follow_speed = min(
+        v_cruise,
+        v_ego + CRV_LEAD_FOLLOW_SPEED_RESPONSE * (lead_speed_target - v_ego))
+      speed_error = follow_speed - v_ego
+      self.crv_lead_follow_i = float(np.clip(
+        self.crv_lead_follow_i + CRV_LEAD_FOLLOW_I_GAIN * self.dt * speed_error,
+        -CRV_LEAD_FOLLOW_I_LIMIT, CRV_LEAD_FOLLOW_I_LIMIT))
+      nominal_lead_follow_accel = get_cruise_accel(
+        is_e2e, follow_speed + self.crv_lead_follow_i, v_ego,
+        self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
+        accel_coast, self.throttle_authority)
+      accel_alpha = self.dt / (accel_tau + self.dt)
+      self.crv_lead_follow_accel += accel_alpha * (
+        nominal_lead_follow_accel - self.crv_lead_follow_accel)
+      lead_follow_accel = self.crv_lead_follow_accel
+
+      # Predict the deceleration needed to remove relative closing speed before
+      # reaching the driver's target following distance. This is continuous:
+      # zero/positive relative speed contributes almost nothing, while a fast
+      # closing lead naturally produces an earlier, stronger brake request.
+      target_follow_distance = max(2.0, v_ego * t_follow)
+      closing_speed = max(-closest_lead.vRel, 0.0)
+      distance_to_target = closest_lead.dRel - target_follow_distance
+      predicted_brake = -(closing_speed ** 2) / (2.0 * max(distance_to_target, 1.0))
+      closing_confidence = sigmoid((closing_speed - 0.5) / 0.25)
+      predictive_limit = ((1.0 - closing_confidence) * ACCEL_MAX
+                          + closing_confidence * np.clip(predicted_brake, ACCEL_MIN, 0.0))
+      self.crv_lead_follow_predictive_brake = float(np.clip(
+        closing_confidence * predicted_brake, ACCEL_MIN, 0.0))
+      lead_follow_accel = min(lead_follow_accel, predictive_limit)
+
+      # Only a meaningful raw braking request or an MPC stop decision can
+      # override the averaged following reference. Close/closing and stopped
+      # lead guards below remain independent hard safety overrides.
+      # A raw negative MPC request is only an immediate override for an
+      # actual closing-TTC threat. A lead traveling near ego speed should be
+      # handled by the averaged reference and coast-only gap guard.
+      closing_ttc = closest_lead.dRel / max(-closest_lead.vRel, 1e-3) \
+        if closest_lead.vRel < 0.0 else float("inf")
+      raw_mpc_brake_request = output_should_stop_mpc or (
+        output_a_target_mpc < CRV_LEAD_FOLLOW_BRAKE_OVERRIDE
+        and closing_ttc < CRV_LEAD_FOLLOW_SAFETY_TTC)
+      if raw_mpc_brake_request:
+        self.crv_lead_follow_brake_hold_remaining = CRV_LEAD_FOLLOW_BRAKE_HOLD_TIME
+      elif self.crv_lead_follow_brake_hold_remaining > 0.0:
+        self.crv_lead_follow_brake_hold_remaining = max(
+          0.0, self.crv_lead_follow_brake_hold_remaining - self.dt)
+      raw_mpc_brake_override = self.crv_lead_follow_brake_hold_remaining > 0.0
+      self.crv_lead_follow_safety_override = raw_mpc_brake_override
+      lead_candidate = min(output_a_target_mpc, 0.0) if raw_mpc_brake_override else lead_follow_accel
+      lead_stop = output_should_stop_mpc if raw_mpc_brake_request else False
+    else:
+      self.crv_lead_follow_i = 0.0
+      self.crv_lead_follow_accel = self.a_cruise
+      self.crv_lead_follow_time_gap = 0.0
+      self.crv_lead_follow_time_error = 0.0
+      self.crv_lead_follow_bias = 0.0
+      self.crv_lead_follow_predictive_brake = 0.0
+      self.crv_lead_follow_brake_hold_remaining = 0.0
+      self.crv_lead_follow_safety_override = False
+      self.crv_lead_gap_protection = False
+      lead_candidate = output_a_target_mpc
+      lead_stop = output_should_stop_mpc
+
+    candidates = [(lead_candidate, self.mpc.source, lead_stop),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]
     if is_e2e:
       candidates.append((output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e))
 
     output_a_target = smooth_min([candidate[0] for candidate in candidates])
     plan_source = min(candidates, key=lambda c: c[0])[1]
+
+    # Candidate arbitration can otherwise expose small solver/source changes
+    # directly at the actuator boundary. Filter the normal target continuously;
+    # explicit stop/safety confidence blends back to the raw target so safety
+    # commands are not delayed by comfort smoothing.
+    output_alpha = self.dt / (CRV_LEAD_FOLLOW_OUTPUT_TAU + self.dt)
+    filtered_output = a_prev + output_alpha * (output_a_target - a_prev)
+    safety_bypass = float(output_should_stop_mpc or self.crv_lead_follow_safety_override)
+    output_a_target = ((1.0 - safety_bypass) * filtered_output
+                       + safety_bypass * output_a_target)
 
     if self.is_crv_5g and lead_present and plan_source in MPC_SOURCES:
       # A lead selected by the MPC can disappear for a few frames while tracker
@@ -255,38 +424,64 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     else:
       self.stopped_lead_loss_hold_remaining = 0.0
 
-    tracked_leads = [lead for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo) if lead.present]
     if self.is_crv_5g and v_ego < STOPPED_LEAD_SPEED and stopped_close_lead:
       # Remember that the ego vehicle stopped with an insufficient following
       # gap. A moving lead must open that gap before restart acceleration.
       self.crv_post_restart_gap_hold = True
-    elif self.crv_post_restart_gap_hold and not tracked_leads:
+      self.crv_post_restart_gap_armed = True
+    elif self.crv_post_restart_gap_armed and not tracked_leads:
       # Lead loss is handled by the existing L1/L2 protections.
       self.crv_post_restart_gap_hold = False
+      self.crv_post_restart_gap_armed = False
 
-    if self.crv_post_restart_gap_hold and tracked_leads:
+    if self.crv_post_restart_gap_armed and tracked_leads:
       closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
       release_distance = get_safe_obstacle_distance(v_ego, get_T_FOLLOW(sm['selfdriveState'].personality)) \
         - get_stopped_equivalence_factor(max(closest_lead.vLead, 0.0))
-      if closest_lead.dRel >= release_distance:
+      if closest_lead.dRel >= release_distance + CRV_POST_RESTART_GAP_RELEASE_MARGIN:
         self.crv_post_restart_gap_hold = False
       else:
-        output_a_target = min(output_a_target, 0.0)
+        self.crv_post_restart_gap_hold = True
+
+    if self.crv_post_restart_gap_hold and tracked_leads:
+      output_a_target = min(output_a_target, 0.0)
 
     if self.is_crv_5g and tracked_leads:
-      # Do not accelerate toward a continuously tracked lead while the gap is
-      # below the existing desired following-distance boundary. The planner
-      # may coast or brake until the lead opens the gap again.
+      # Normal style control uses continuous confidence terms from the driver's
+      # observed time-gap envelope. The old stopping-distance expression
+      # includes emergency braking distance; using it as an everyday boundary
+      # made stable leads look perpetually too close and produced coast-heavy
+      # behavior. Emergency stopping, TTC, close-closing, and restart
+      # protection remain separate hard safety paths.
       closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
-      desired_lead_distance = get_safe_obstacle_distance(v_ego, get_T_FOLLOW(sm['selfdriveState'].personality)) \
-        - get_stopped_equivalence_factor(max(closest_lead.vLead, 0.0))
-      if closest_lead.dRel < desired_lead_distance:
-        output_a_target = min(output_a_target, 0.0)
+      t_follow = get_T_FOLLOW(sm['selfdriveState'].personality)
+      # The target is the full personality following distance. The close-side
+      # tolerance belongs in the response softness, not in the target itself.
+      desired_lead_distance = max(2.0, v_ego * t_follow)
+      gap_pressure = sigmoid((desired_lead_distance - closest_lead.dRel) /
+                             max(CRV_LEAD_FOLLOW_GAP_HYSTERESIS, 0.1))
+      closing_pressure = sigmoid((-closest_lead.vRel - 0.2) / 0.4)
+      normal_follow_pressure = max(gap_pressure, 0.75 * closing_pressure)
+      self.crv_lead_gap_protection = normal_follow_pressure > 0.5
+      # Blend toward a gentle coast-down continuously. A negative candidate
+      # remains untouched; only positive/near-zero normal following is shaped.
+      normal_coast_limit = ((1.0 - normal_follow_pressure) * ACCEL_MAX
+                            + normal_follow_pressure * CRV_LEAD_FOLLOW_COAST_DOWN_ACCEL)
+      output_a_target = min(output_a_target, normal_coast_limit)
 
     close_closing_stop = self.is_crv_5g and crv_close_closing_should_stop(
       v_ego, (sm['radarState'].leadOne, sm['radarState'].leadTwo))
     if close_closing_stop:
       output_a_target = min(output_a_target, 0.0)
+
+    # A closing lead must not be allowed to consume the entire following gap
+    # while the TTC path is reacting. This is only a closing-lead guard: a
+    # stable lead may remain inside the normal driver's time-gap envelope.
+    if self.is_crv_5g and tracked_leads:
+      closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
+      closing_time_gap = closest_lead.dRel / max(v_ego, 0.5)
+      if closest_lead.vRel < -0.1 and closing_time_gap < CRV_LEAD_FOLLOW_MIN_CLOSING_TIME_GAP:
+        output_a_target = min(output_a_target, -0.5)
 
     self.mpc.source = plan_source
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates) \

@@ -1,11 +1,13 @@
 """Regression tests for continuous longitudinal candidate arbitration."""
 
 import numpy as np
+from openpilot.cereal import log
 
 from openpilot.common.test import OpenpilotTestCase
 from openpilot.selfdrive.controls.lib.longitudinal_planner import (
   get_throttle_authority, smooth_min,
 )
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import get_T_FOLLOW
 
 
 class TestCrvContinuousLongitudinalControl(OpenpilotTestCase):
@@ -31,3 +33,9 @@ class TestCrvContinuousLongitudinalControl(OpenpilotTestCase):
     assert get_throttle_authority(0.0, 2.5) == 1.0
     assert 0.0 < get_throttle_authority(0.0, 3.75) < 1.0
     assert get_throttle_authority(0.0, 5.0) == 0.0
+
+  def test_personality_follow_times_include_relaxed_margin(self):
+    aggressive = get_T_FOLLOW(log.LongitudinalPersonality.aggressive)
+    standard = get_T_FOLLOW(log.LongitudinalPersonality.standard)
+    relaxed = get_T_FOLLOW(log.LongitudinalPersonality.relaxed)
+    assert (aggressive, standard, relaxed) == (1.5, 1.7, 2.05)
