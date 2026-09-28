@@ -75,13 +75,13 @@ traces.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.text
 function finite(v){return v!==null&&Number.isFinite(v)}
 function draw(id, series, title, yLabel){
  const c=$(id),ctx=c.getContext('2d'),w=c.width,h=c.height,p={l:58,r:18,t:28,b:30};ctx.clearRect(0,0,w,h);
- const t=traces[$('case').value], xs=t.time; let vals=[]; series.forEach(s=>s.data.forEach(v=>{if(finite(v))vals.push(v)}));
+ const active=series.filter(s=>s.data!==null), t=traces[$('case').value], xs=t.time; let vals=[]; active.forEach(s=>s.data.forEach(v=>{if(finite(v))vals.push(v)}));
  if(!vals.length)return; let lo=Math.min(...vals),hi=Math.max(...vals);if(lo===hi){lo-=1;hi+=1}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;
  const x=v=>p.l+(v-xs[0])/(xs[xs.length-1]-xs[0])*(w-p.l-p.r), y=v=>h-p.b-(v-lo)/(hi-lo)*(h-p.t-p.b);
  ctx.strokeStyle='#ddd';ctx.fillStyle='#555';ctx.font='12px system-ui';ctx.beginPath();ctx.moveTo(p.l,p.t);ctx.lineTo(p.l,h-p.b);ctx.lineTo(w-p.r,h-p.b);ctx.stroke();
  ctx.fillText(title,p.l,17);ctx.fillText(yLabel,4,p.t+10);ctx.fillText(lo.toFixed(2),4,h-p.b);ctx.fillText(hi.toFixed(2),4,p.t+4);ctx.fillText('time (s)',w-70,h-8);
- series.forEach(s=>{ctx.strokeStyle=s.color;ctx.lineWidth=2;ctx.beginPath();let on=false;s.data.forEach((v,i)=>{if(!finite(v)){on=false;return}const X=x(xs[i]),Y=y(v);if(!on)ctx.moveTo(X,Y);else ctx.lineTo(X,Y);on=true});ctx.stroke()});
- const lx=p.l+8;series.forEach((s,i)=>{ctx.fillStyle=s.color;ctx.fillRect(lx+i*145,h-18,10,10);ctx.fillStyle='#333';ctx.fillText(s.name,lx+14+i*145,h-8)});
+ active.forEach(s=>{ctx.strokeStyle=s.color;ctx.lineWidth=2;ctx.beginPath();let on=false;s.data.forEach((v,i)=>{if(!finite(v)){on=false;return}const X=x(xs[i]),Y=y(v);if(!on)ctx.moveTo(X,Y);else ctx.lineTo(X,Y);on=true});ctx.stroke()});
+ const lx=p.l+8;active.forEach((s,i)=>{ctx.fillStyle=s.color;ctx.fillRect(lx+i*145,h-18,10,10);ctx.fillStyle='#333';ctx.fillText(s.name,lx+14+i*145,h-8)});
 }
 function render(){const t=traces[$('case').value];$('meta').innerHTML=`<b>${t.label}</b> &nbsp; final mode: ${t.mode[t.mode.length-1]} &nbsp; mode transitions: ${t.transitions[t.transitions.length-1]}${t.grade===null?'':` &nbsp; grade: ${t.grade}%`}`;
  draw('speed',[{name:'ego mph',data:t.ego,color:colors.ego},{name:'lead mph',data:t.lead,color:colors.lead},{name:'target mph',data:t.time.map(()=>t.target),color:colors.target}],'Speed','mph');
