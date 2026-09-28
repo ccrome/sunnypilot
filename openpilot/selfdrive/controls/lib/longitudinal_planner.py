@@ -39,6 +39,10 @@ CRV_CLOSE_STOP_MIN_SPEED = 0.3
 CRV_CRUISE_SPEED_I_MIN_SPEED = 5.0
 CRV_CRUISE_SPEED_I_GAIN = 0.03
 CRV_CRUISE_SPEED_I_LIMIT = 0.15
+# A one-second speed-error response overshoots the CR-V after actuator delay;
+# this slower reference is still fast enough for normal set-speed changes.
+CRV_CRUISE_SPEED_GAIN = 0.10
+CRV_GRADE_ACCEL_GAIN = 9.81 / 5.65
 # Fitted toward the several-second correlation of lead speed/gap in the CR-V
 # reference drive. Safety/TTC and stop paths below remain immediate.
 # The reference drives accept several seconds of lead-speed variation instead
@@ -123,7 +127,9 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
                             [max_accel, clipped_accel_coast])
     max_accel = coast_limit + throttle_authority * (max_accel - coast_limit)
 
-  target_accel = np.clip(v_cruise - v_ego + speed_error_bias, A_CRUISE_MIN, max_accel)
+  grade_accel = -(accel_coast + 0.3) * CRV_GRADE_ACCEL_GAIN
+  target_accel = np.clip(CRV_CRUISE_SPEED_GAIN * (v_cruise - v_ego) + speed_error_bias + grade_accel,
+                         A_CRUISE_MIN, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
   target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
@@ -156,6 +162,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.output_a_target = init_a
     self.output_should_stop = False
     self.crv_cruise_speed_i = 0.0
+    self.crv_cruise_speed_error_prev = 0.0
     self.crv_lead_follow_speed = init_v
     self.crv_lead_follow_gap = 0.0
     self.crv_lead_follow_i = 0.0
@@ -213,6 +220,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
       self.crv_cruise_speed_i = 0.0
+      self.crv_cruise_speed_error_prev = 0.0
       self.crv_lead_follow_speed = v_ego
       self.crv_lead_follow_gap = 0.0
       self.crv_lead_follow_i = 0.0
@@ -268,11 +276,17 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       and self.throttle_authority > 0.0 and v_ego >= CRV_CRUISE_SPEED_I_MIN_SPEED
     if use_crv_cruise_speed_i:
       speed_error = v_cruise - v_ego
+      if speed_error * self.crv_cruise_speed_error_prev < 0.0:
+        # Do not carry an acceleration bias through the target-speed crossing;
+        # that stored bias is the source of the repeatable transition overshoot.
+        self.crv_cruise_speed_i = 0.0
       self.crv_cruise_speed_i = float(np.clip(
         self.crv_cruise_speed_i + CRV_CRUISE_SPEED_I_GAIN * self.dt * speed_error * self.throttle_authority,
         -CRV_CRUISE_SPEED_I_LIMIT, CRV_CRUISE_SPEED_I_LIMIT))
+      self.crv_cruise_speed_error_prev = speed_error
     else:
       self.crv_cruise_speed_i = 0.0
+      self.crv_cruise_speed_error_prev = 0.0
 
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,

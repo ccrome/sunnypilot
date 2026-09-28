@@ -28,7 +28,7 @@ TARGET_GAP = 2.05
 def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
   plant = Plant(speed=start_mph * MPH, physics=True, realtime=False,
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
-  duration = max(24.0, 12.0 + abs(target_mph - start_mph) * 0.35)
+  duration = max(30.0, 15.0 + abs(target_mph - start_mph) * 0.40)
   rows = []
   while plant.current_time < duration:
     plant.step(v_cruise=target_mph * MPH)
@@ -47,7 +47,7 @@ def _crossing_time(rows: np.ndarray, target_mph: float, start_mph: float) -> flo
 def _run_cruise(target_mph: float, grade_percent: int) -> np.ndarray:
   plant = Plant(speed=0.0, physics=True, realtime=False,
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
-  duration = 55.0
+  duration = 75.0
   rows = []
   pitch = math.atan(grade_percent / 100.0)
   while plant.current_time < duration:
