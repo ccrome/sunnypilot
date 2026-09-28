@@ -276,10 +276,6 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       and self.throttle_authority > 0.0 and v_ego >= CRV_CRUISE_SPEED_I_MIN_SPEED
     if use_crv_cruise_speed_i:
       speed_error = v_cruise - v_ego
-      if speed_error * self.crv_cruise_speed_error_prev < 0.0:
-        # Do not carry an acceleration bias through the target-speed crossing;
-        # that stored bias is the source of the repeatable transition overshoot.
-        self.crv_cruise_speed_i = 0.0
       self.crv_cruise_speed_i = float(np.clip(
         self.crv_cruise_speed_i + CRV_CRUISE_SPEED_I_GAIN * self.dt * speed_error * self.throttle_authority,
         -CRV_CRUISE_SPEED_I_LIMIT, CRV_CRUISE_SPEED_I_LIMIT))
