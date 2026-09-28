@@ -24,6 +24,7 @@ SIM_RATE = 20.0
 DT = 1.0 / SIM_RATE
 TARGET_GAP = 2.05
 POST_TARGET_SETTLE_S = 60.0
+RUN_DURATION_S = 120.0
 
 
 def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
@@ -32,7 +33,7 @@ def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
   # Keep the trace alive well beyond the crossing.  The quality gate must see
   # the complete post-transition behavior, not just the instant the target is
   # first reached.
-  duration = max(120.0, 15.0 + abs(target_mph - start_mph) * 0.40 + POST_TARGET_SETTLE_S)
+  duration = max(RUN_DURATION_S, 15.0 + abs(target_mph - start_mph) * 0.40 + POST_TARGET_SETTLE_S)
   rows = []
   while plant.current_time < duration:
     plant.step(v_cruise=target_mph * MPH)
@@ -53,7 +54,7 @@ def _run_cruise(target_mph: float, grade_percent: int) -> np.ndarray:
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
   # The cruise matrix also needs a full post-target stability window.  The
   # longest acceleration in this matrix reaches target before this budget.
-  duration = 120.0
+  duration = RUN_DURATION_S
   rows = []
   pitch = math.atan(grade_percent / 100.0)
   while plant.current_time < duration:
@@ -77,7 +78,7 @@ def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool) -> np.ndar
                 personality=log.LongitudinalPersonality.relaxed,
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
   rows = []
-  while plant.current_time < 38.0:
+  while plant.current_time < RUN_DURATION_S:
     approaching = plant.current_time >= 3.0
     lead_speed = 0.0 if stopped and approaching else max(0.0, ego - closing) if approaching else ego
     plant.step(v_lead=lead_speed, prob_lead=1.0, v_cruise=ego)
@@ -131,7 +132,7 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
     for target in range(10, 91, 10):
       for grade in range(-15, 16, 3):
         rows = _run_cruise(target, grade)
-        settled = rows[rows[:, 0].astype(float) >= 25.0]
+        settled = rows[rows[:, 0].astype(float) >= RUN_DURATION_S - POST_TARGET_SETTLE_S]
         speed = settled[:, 1].astype(float)
         gas = settled[:, 3].astype(float)
         brake = settled[:, 4].astype(float)
@@ -166,9 +167,22 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
           later_min = float(np.min(gaps[recovery_i + 1:])) if recovery_i + 1 < len(rows) else recovery_gap
           recover_time = float(t[recovery_i] - t[closest]) if recovery_i < len(rows) else math.inf
           min_gap = float(gaps[closest])
-          if min_gap < 1.0 or recover_time > 15.0 or later_min < recovery_gap - 1e-3:
+          tail_start = max(t[recovery_i] if recovery_i < len(rows) else math.inf,
+                           RUN_DURATION_S - POST_TARGET_SETTLE_S)
+          tail = rows[t >= tail_start] if math.isfinite(tail_start) else rows[:0]
+          tail_gap_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+          tail_mode_transitions = (int(tail[-1, 11]) - int(tail[0, 11])) if len(tail) else math.inf
+          tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - TARGET_GAP)))
+                               if len(tail) else math.inf)
+          settled = (stopped and tail_gap_span <= 0.05
+                     or not stopped and tail_gap_span <= 0.05 and tail_target_error <= 0.25)
+          if (min_gap < 1.0 or recover_time > 15.0 or later_min < recovery_gap - 1e-3
+              or len(tail) == 0 or tail[-1, 0] - tail[0, 0] < POST_TARGET_SETTLE_S
+              or not settled or tail_mode_transitions > 2):
             failures.append({"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                              "minimum_time_gap_s": min_gap, "recovery_s": recover_time,
                              "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
-                             "settled_target_s": TARGET_GAP})
+                             "settled_target_s": TARGET_GAP, "settled_gap_span_s": tail_gap_span,
+                             "settled_target_error_s": tail_target_error,
+                             "settled_mode_transitions": tail_mode_transitions})
     assert not failures, f"CR-V fast-closing lead failures: {failures}"

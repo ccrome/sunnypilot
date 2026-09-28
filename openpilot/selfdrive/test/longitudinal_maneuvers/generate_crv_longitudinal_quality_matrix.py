@@ -13,6 +13,8 @@ import numpy as np
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quality_regression import (
   TARGET_GAP,
+  POST_TARGET_SETTLE_S,
+  RUN_DURATION_S,
   _p95_jerk,
   _run_cruise,
   _run_lead_case,
@@ -41,13 +43,19 @@ def _speed_row(start, target):
     passed = math.isfinite(crossing) and target - extreme <= 1.0
     metrics = {"target_mph": target, "trough_mph": extreme, "undershoot_mph": target - extreme}
     kind, case = "Speed down", f"{start} → {target} mph"
-  metrics.update({"crossing_s": crossing, "mode": data[-1, 6], "transitions": int(data[-1, 7])})
+  settled = data[data[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else data[:0]
+  settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
+  settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+  passed = passed and settled_duration >= POST_TARGET_SETTLE_S and settled_error <= 1.0
+  metrics.update({"crossing_s": crossing, "settled_duration_s": settled_duration,
+                  "settled_error_mph": settled_error, "mode": data[-1, 6],
+                  "transitions": int(data[-1, 7])})
   return row(kind, case, passed, metrics)
 
 
 def _cruise_row(target, grade):
   data = _run_cruise(target, grade)
-  settled = data[data[:, 0].astype(float) >= 25.0]
+  settled = data[data[:, 0].astype(float) >= RUN_DURATION_S - POST_TARGET_SETTLE_S]
   speed = settled[:, 1].astype(float)
   gas = settled[:, 3].astype(float)
   brake = settled[:, 4].astype(float)
@@ -74,12 +82,25 @@ def _lead_row(ego, closing, stopped):
   later_min = float(np.min(gaps[recovery_i + 1:])) if recovery_i + 1 < len(data) else recovery_gap
   recovery_s = float(times[recovery_i] - times[closest]) if recovery_i < len(data) else math.inf
   min_gap = float(gaps[closest])
-  passed = min_gap >= 1.0 and recovery_s <= 15.0 and later_min >= recovery_gap - 1e-3
+  tail_start = max(times[recovery_i] if recovery_i < len(data) else math.inf,
+                   RUN_DURATION_S - POST_TARGET_SETTLE_S)
+  tail = data[times >= tail_start] if math.isfinite(tail_start) else data[:0]
+  tail_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+  tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - TARGET_GAP)))
+                       if len(tail) else math.inf)
+  tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
+  settled = (stopped and tail_span <= 0.05
+             or not stopped and tail_span <= 0.05 and tail_target_error <= 0.25)
+  passed = (min_gap >= 1.0 and recovery_s <= 15.0 and later_min >= recovery_gap - 1e-3
+            and len(tail) > 0 and tail[-1, 0] - tail[0, 0] >= POST_TARGET_SETTLE_S
+            and settled and tail_transitions <= 2)
   return row("Lead", f"{ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}",
              passed, {"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                       "minimum_time_gap_s": min_gap, "recovery_s": recovery_s,
                       "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
-                      "target_gap_s": TARGET_GAP})
+                      "target_gap_s": TARGET_GAP, "settled_gap_span_s": tail_span,
+                      "settled_target_error_s": tail_target_error,
+                      "settled_mode_transitions": tail_transitions})
 
 
 def run_matrix():

@@ -39,7 +39,7 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
     failures = []
     for target, grade in ((30, 0), (30, -3), (30, 3)):
       rows = q._run_cruise(target, grade)
-      settled = rows[rows[:, 0].astype(float) >= 45.0]
+      settled = rows[rows[:, 0].astype(float) >= q.RUN_DURATION_S - q.POST_TARGET_SETTLE_S]
       speed_error = float(np.max(np.abs(settled[:, 1].astype(float) - target)))
       gas_span = float(np.ptp(settled[:, 3].astype(float)))
       brake_span = float(np.ptp(settled[:, 4].astype(float)))
@@ -66,8 +66,21 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       later_min = float(np.min(gaps[recovery_i + 1:])) if recovery_i + 1 < len(rows) else recovery_gap
       recovery_s = float(times[recovery_i] - times[closest]) if recovery_i < len(rows) else math.inf
       min_gap = float(gaps[closest])
-      if min_gap < 1.0 or recovery_s > 15.0 or later_min < recovery_gap - 1e-3:
+      tail_start = max(times[recovery_i] if recovery_i < len(rows) else math.inf,
+                       q.RUN_DURATION_S - q.POST_TARGET_SETTLE_S)
+      tail = rows[times >= tail_start] if math.isfinite(tail_start) else rows[:0]
+      tail_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+      tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
+      tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - q.TARGET_GAP)))
+                           if len(tail) else math.inf)
+      settled = (stopped and tail_span <= 0.05
+                 or not stopped and tail_span <= 0.05 and tail_target_error <= 0.25)
+      if (min_gap < 1.0 or recovery_s > 15.0 or later_min < recovery_gap - 1e-3
+          or len(tail) == 0 or tail[-1, 0] - tail[0, 0] < q.POST_TARGET_SETTLE_S
+          or not settled or tail_transitions > 2):
         failures.append({"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                          "minimum_time_gap_s": min_gap, "recovery_s": recovery_s,
-                         "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min})
+                         "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
+                         "settled_gap_span_s": tail_span, "settled_target_error_s": tail_target_error,
+                         "settled_mode_transitions": tail_transitions})
     assert not failures, f"CR-V subset lead failures: {failures}"
