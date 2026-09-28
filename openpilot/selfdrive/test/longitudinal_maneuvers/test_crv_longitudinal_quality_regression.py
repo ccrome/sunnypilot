@@ -92,7 +92,8 @@ def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool) -> np.ndar
     rows.append((plant.current_time, plant.speed / MPH, gap, time_gap,
                  plant.acceleration, lead_speed / MPH, plant.planner_acceleration,
                  plant.gas_command, plant.brake_intensity, plant.brake_request,
-                 plant.actuator_mode, plant.mode_transitions))
+                 plant.actuator_mode, plant.mode_transitions,
+                 plant.predictive_brake, plant.safety_override))
   return np.asarray(rows, dtype=object)
 
 

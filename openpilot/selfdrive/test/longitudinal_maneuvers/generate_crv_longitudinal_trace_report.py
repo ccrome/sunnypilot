@@ -28,21 +28,22 @@ def _trace(spec):
     rows = q._run_speed_transition(start, target)
     label = f"Speed: {start} → {target} mph"
     values = (rows[:, 0], rows[:, 1], None, target, None, None, None,
-              rows[:, 2], rows[:, 8], rows[:, 3], rows[:, 5], rows[:, 4], rows[:, 6], rows[:, 7])
+              rows[:, 2], rows[:, 8], rows[:, 3], rows[:, 5], rows[:, 4], rows[:, 6], rows[:, 7], None, None)
   elif kind == "cruise":
     target, grade = spec[1:]
     rows = q._run_cruise(target, grade)
     label = f"Cruise: {target} mph at {grade:+d}%"
     values = (rows[:, 0], rows[:, 1], None, target, grade, None, None,
-              rows[:, 8], rows[:, 9], rows[:, 3], rows[:, 4], rows[:, 5], rows[:, 6], rows[:, 7])
+              rows[:, 8], rows[:, 9], rows[:, 3], rows[:, 4], rows[:, 5], rows[:, 6], rows[:, 7], None, None)
   else:
     ego, closing, stopped = spec[1:]
     rows = q._run_lead_case(ego, closing, stopped)
     label = f"Lead: {ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}"
     values = (rows[:, 0], rows[:, 1], rows[:, 5], ego, None, rows[:, 2], rows[:, 3],
-              rows[:, 4], rows[:, 6], rows[:, 7], rows[:, 8], rows[:, 9], rows[:, 10], rows[:, 11])
+              rows[:, 4], rows[:, 6], rows[:, 7], rows[:, 8], rows[:, 9], rows[:, 10], rows[:, 11],
+              rows[:, 12], rows[:, 13])
 
-  time, ego, lead, target, grade, gap, time_gap, accel, planner_accel, gas, brake, brake_request, mode, transitions = values
+  time, ego, lead, target, grade, gap, time_gap, accel, planner_accel, gas, brake, brake_request, mode, transitions, predictive_brake, safety = values
   def clean(value):
     if value is None:
       return None
@@ -50,7 +51,8 @@ def _trace(spec):
   return {"label": label, "time": clean(time), "ego": clean(ego), "lead": clean(lead),
           "target": target, "grade": grade, "gap": clean(gap), "time_gap": clean(time_gap),
           "accel": clean(accel), "planner_accel": clean(planner_accel), "gas": clean(gas),
-          "brake": clean(brake), "brake_request": clean(brake_request), "mode": list(mode),
+          "brake": clean(brake), "brake_request": clean(brake_request),
+          "predictive_brake": clean(predictive_brake), "safety": clean(safety), "mode": list(mode),
           "transitions": clean(transitions)}
 
 
@@ -84,7 +86,7 @@ function draw(id, series, title, yLabel, dualAxis=false, secondaryTitle=''){
 }
 function render(){const t=traces[$('case').value];$('meta').innerHTML=`<b>${t.label}</b> &nbsp; final mode: ${t.mode[t.mode.length-1]} &nbsp; mode transitions: ${t.transitions[t.transitions.length-1]}${t.grade===null?'':` &nbsp; grade: ${t.grade}%`}`;
  draw('speed',[{name:'ego mph',data:t.ego,color:colors.ego},{name:'lead mph',data:t.lead,color:colors.lead},{name:'target mph',data:t.time.map(()=>t.target),color:colors.target}],'Speed','mph');
- draw('accel',[{name:'planner m/s²',data:t.planner_accel,color:colors.planner},{name:'physical m/s²',data:t.accel,color:colors.actual}],'Acceleration','m/s²');
+ draw('accel',[{name:'planner m/s²',data:t.planner_accel,color:colors.planner},{name:'physical m/s²',data:t.accel,color:colors.actual},{name:'predictive brake m/s²',data:t.predictive_brake,color:colors.brake},{name:'safety override (1=engaged)',data:t.safety===null?null:t.safety.map(v=>v?1:0),color:'#000',axis:'y2'}],'Acceleration and lead braking','m/s²',true,'safety override');
  draw('actuator',[{name:'gas command 0–1',data:t.gas,color:colors.gas},{name:'brake request',data:t.brake_request,color:colors.brake},{name:'brake intensity 0–1',data:t.brake,color:'#8e24aa'},{name:'mode (gas=1, coast=0, brake=-1)',data:t.mode.map(m=>m==='gas'?1:m==='brake'?-1:0),color:'#455a64',axis:'y2'}],'Honda gas / coast / brake commands','command (normalized)',true,'mode');
  draw('gap',[{name:'gap m',data:t.gap,color:colors.gap},{name:'time gap s',data:t.time_gap,color:colors.timegap,axis:'y2'}],'Lead gap','gap (m)',true,'time gap (s)');}
 $('case').onchange=render;render();

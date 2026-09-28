@@ -44,6 +44,8 @@ class Plant:
     self.brake_intensity = 0.0
     self.actuator_mode = "coast"
     self.mode_transitions = 0
+    self.predictive_brake = 0.0
+    self.safety_override = False
     self._last_actuator_mode = self.actuator_mode
     self.physics = physics
     self.realtime = realtime
@@ -173,6 +175,8 @@ class Plant:
           'gpsLocation': gps_data.gpsLocation}
     self.planner.update(sm)
     self.planner_acceleration = float(self.planner.output_a_target)
+    self.predictive_brake = float(getattr(self.planner, "crv_lead_follow_predictive_brake", 0.0))
+    self.safety_override = bool(getattr(self.planner, "crv_lead_follow_safety_override", False))
     self._update_actuator(self.planner_acceleration)
     self.acceleration = self.planner_acceleration
     if self.planner.output_should_stop:
@@ -231,6 +235,8 @@ class Plant:
       "brake_intensity": self.brake_intensity,
       "actuator_mode": self.actuator_mode,
       "mode_transitions": self.mode_transitions,
+      "predictive_brake": self.predictive_brake,
+      "safety_override": self.safety_override,
     }
 
   def _update_actuator(self, accel):

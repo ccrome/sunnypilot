@@ -52,6 +52,8 @@ CRV_LEAD_FOLLOW_SPEED_RESPONSE = 0.55
 CRV_LEAD_FOLLOW_GAP_TAU_PER_FOLLOW = 1.5
 CRV_LEAD_FOLLOW_ACCEL_TAU_PER_FOLLOW = 0.75
 CRV_LEAD_FOLLOW_OUTPUT_TAU = 2.00
+CRV_LEAD_FOLLOW_SAFETY_BLEND_MARGIN = 0.05
+CRV_LEAD_FOLLOW_SAFETY_BLEND_SCALE = 0.15
 CRV_LEAD_FOLLOW_I_GAIN = 0.02
 CRV_LEAD_FOLLOW_I_LIMIT = 0.15
 # Mild MPC deceleration is part of ordinary lead-speed regulation and is
@@ -64,7 +66,7 @@ CRV_LEAD_FOLLOW_BRAKE_HOLD_TIME = 0.5
 # Engage predictive braking well before the closing lead reaches the old 4 s TTC
 # boundary; the plant/actuator delay otherwise allows an unsafe time-gap
 # collapse even though the override technically fires.
-CRV_LEAD_FOLLOW_SAFETY_TTC = 10.0
+CRV_LEAD_FOLLOW_SAFETY_TTC = 4.0
 CRV_LEAD_FOLLOW_MIN_CLOSING_TIME_GAP = 1.25
 # Reference-drive p10 time gap is 1.38 s against a 2.05 s target.
 CRV_LEAD_FOLLOW_CLOSE_TOLERANCE = 0.65
@@ -401,7 +403,11 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     # commands are not delayed by comfort smoothing.
     output_alpha = self.dt / (CRV_LEAD_FOLLOW_OUTPUT_TAU + self.dt)
     filtered_output = a_prev + output_alpha * (output_a_target - a_prev)
-    safety_bypass = float(output_should_stop_mpc or self.crv_lead_follow_safety_override)
+    safety_pressure = sigmoid(
+      (filtered_output - output_a_target - CRV_LEAD_FOLLOW_SAFETY_BLEND_MARGIN)
+      / CRV_LEAD_FOLLOW_SAFETY_BLEND_SCALE)
+    safety_bypass = max(float(output_should_stop_mpc),
+                        float(self.crv_lead_follow_safety_override) * safety_pressure)
     output_a_target = ((1.0 - safety_bypass) * filtered_output
                        + safety_bypass * output_a_target)
 
