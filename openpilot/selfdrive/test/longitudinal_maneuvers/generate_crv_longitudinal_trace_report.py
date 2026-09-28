@@ -76,7 +76,7 @@ function finite(v){return v!==null&&Number.isFinite(v)}
 function draw(id, series, title, yLabel){
  const c=$(id),ctx=c.getContext('2d'),w=c.width,h=c.height,p={l:58,r:18,t:28,b:30};ctx.clearRect(0,0,w,h);
  const active=series.filter(s=>s.data!==null), t=traces[$('case').value], xs=t.time; let vals=[]; active.forEach(s=>s.data.forEach(v=>{if(finite(v))vals.push(v)}));
- if(!vals.length)return; let lo=Math.min(...vals),hi=Math.max(...vals);if(lo===hi){lo-=1;hi+=1}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;
+ if(!vals.length){ctx.fillStyle='#666';ctx.font='16px system-ui';ctx.fillText('No lead trace for this case',p.l,60);return} let lo=Math.min(...vals),hi=Math.max(...vals);if(lo===hi){lo-=1;hi+=1}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;
  const x=v=>p.l+(v-xs[0])/(xs[xs.length-1]-xs[0])*(w-p.l-p.r), y=v=>h-p.b-(v-lo)/(hi-lo)*(h-p.t-p.b);
  ctx.strokeStyle='#ddd';ctx.fillStyle='#555';ctx.font='12px system-ui';ctx.beginPath();ctx.moveTo(p.l,p.t);ctx.lineTo(p.l,h-p.b);ctx.lineTo(w-p.r,h-p.b);ctx.stroke();
  ctx.fillText(title,p.l,17);ctx.fillText(yLabel,4,p.t+10);ctx.fillText(lo.toFixed(2),4,h-p.b);ctx.fillText(hi.toFixed(2),4,p.t+4);ctx.fillText('time (s)',w-70,h-8);
