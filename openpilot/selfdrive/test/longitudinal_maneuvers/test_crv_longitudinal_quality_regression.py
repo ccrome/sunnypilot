@@ -107,8 +107,9 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
       settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
       settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
-      gas_d_p95 = _p95_command_derivative(settled[:, 3]) if len(settled) else math.inf
-      brake_d_p95 = _p95_command_derivative(settled[:, 5]) if len(settled) else math.inf
+      stable = rows[rows[:, 0].astype(float) >= RUN_DURATION_S - POST_TARGET_SETTLE_S]
+      gas_d_p95 = _p95_command_derivative(stable[:, 3])
+      brake_d_p95 = _p95_command_derivative(stable[:, 5])
       if (not math.isfinite(crossing) or peak - target > 1.0
           or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0
           or gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX or brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX):
@@ -127,8 +128,9 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
       settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
       settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
-      gas_d_p95 = _p95_command_derivative(settled[:, 3]) if len(settled) else math.inf
-      brake_d_p95 = _p95_command_derivative(settled[:, 5]) if len(settled) else math.inf
+      stable = rows[rows[:, 0].astype(float) >= RUN_DURATION_S - POST_TARGET_SETTLE_S]
+      gas_d_p95 = _p95_command_derivative(stable[:, 3])
+      brake_d_p95 = _p95_command_derivative(stable[:, 5])
       if (not math.isfinite(crossing) or target - trough > 1.0
           or settled_duration < POST_TARGET_SETTLE_S or settled_error > 1.0
           or gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX or brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX):

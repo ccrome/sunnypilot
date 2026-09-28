@@ -27,11 +27,17 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       settled = rows[rows[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else rows[:0]
       settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
       settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
+      stable = rows[rows[:, 0].astype(float) >= q.RUN_DURATION_S - q.POST_TARGET_SETTLE_S]
+      gas_d_p95 = q._p95_command_derivative(stable[:, 3])
+      brake_d_p95 = q._p95_command_derivative(stable[:, 5])
       if (not math.isfinite(crossing) or error > 1.0
-          or settled_duration < q.POST_TARGET_SETTLE_S or settled_error > 1.0):
+          or settled_duration < q.POST_TARGET_SETTLE_S or settled_error > 1.0
+          or gas_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX
+          or brake_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX):
         failures.append({"start_mph": start, "target_mph": target, "extreme_mph": extreme,
                          "error_mph": error, "crossing_s": crossing,
                          "settled_duration_s": settled_duration, "settled_error_mph": settled_error,
+                         "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
                          "mode": rows[-1, 6], "transitions": int(rows[-1, 7])})
     assert not failures, f"CR-V subset speed failures: {failures}"
 
