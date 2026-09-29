@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ProcessPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -14,12 +15,14 @@ from openpilot.selfdrive.test.longitudinal_maneuvers import test_crv_longitudina
 
 
 OUT = Path(__file__).with_name("crv_longitudinal_trace_report.html")
+OUT_JSON = Path(__file__).with_name("crv_longitudinal_trace_results.json")
 CASES = (
   ("speed", 0, 15), ("speed", 0, 45), ("speed", 0, 75),
   ("speed", 90, 45), ("speed", 90, 15),
   ("cruise", 30, 0), ("cruise", 30, -3), ("cruise", 30, 3),
   ("lead", 25, 10, False), ("lead", 45, 20, False),
   ("lead", 65, 10, False), ("lead", 25, 15, True),
+  ("rolling", 35), ("deviation", 45, 35, 1), ("far", 45),
 )
 
 
@@ -37,13 +40,29 @@ def _trace(spec):
     label = f"Cruise: {target} mph at {grade:+d}%"
     values = (rows[:, 0], rows[:, 1], None, target, grade, None, None,
               rows[:, 8], rows[:, 9], rows[:, 3], rows[:, 4], rows[:, 5], rows[:, 6], rows[:, 7], None, None)
-  else:
-    ego, closing, stopped = spec[1:]
-    rows = q._run_lead_case(ego, closing, stopped)
-    label = f"Lead: {ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}"
+  elif kind in {"lead", "deviation", "far", "rolling"}:
+    if kind == "lead":
+      ego, closing, stopped = spec[1:]
+      rows = q._run_lead_case(ego, closing, stopped)
+      label = f"Lead: {ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}"
+    elif kind == "rolling":
+      ego = spec[1]
+      rows = q._run_rolling_lead_stop_case(ego)
+      label = f"Rolling lead stop: {ego} mph ego"
+    elif kind == "deviation":
+      ego, lead, seed = spec[1:]
+      rows = q._run_lead_speed_deviation_case(ego, lead, seed)
+      label = f"Lead deviations: {ego} mph ego / {lead} mph nominal / seed {seed}"
+    else:
+      target_lead = spec[1]
+      ego = target_lead + 10.0
+      rows = q._run_far_lead_case(target_lead)
+      label = f"Far lead convergence: {ego} mph set / {target_lead} mph lead"
     values = (rows[:, 0], rows[:, 1], rows[:, 5], ego, None, rows[:, 2], rows[:, 3],
               rows[:, 4], rows[:, 6], rows[:, 7], rows[:, 8], rows[:, 9], rows[:, 10], rows[:, 11],
               rows[:, 12], rows[:, 13])
+  else:
+    raise ValueError(f"unknown trace kind: {kind}")
 
   time, ego, lead, target, grade, gap, time_gap, accel, planner_accel, gas, brake, brake_request, mode, transitions, predictive_brake, safety = values
   sample_dt = float(np.median(np.diff(np.asarray(time, dtype=float))))
@@ -72,6 +91,7 @@ select{font:16px;padding:6px;min-width:420px}.plot{width:100%;max-width:1100px;h
 </style></head><body>
 <h1>CR-V longitudinal quality traces</h1>
 <p>Select a representative case to inspect the actual closed-loop signals. Gas is normalized 0–1 from the Honda Bosch 0–1600 command; brake is normalized from the commanded negative acceleration.</p>
+<p><a href="http://localhost:8050/">Open the live Dash dashboard</a>. The dashboard refreshes only when you press its refresh button.</p>
 <select id="case"></select><div class="meta" id="meta"></div>
 <div id="trace" class="plot"></div>
 <script>
@@ -125,6 +145,9 @@ def main():
   with ProcessPoolExecutor(max_workers=12) as executor:
     traces = list(executor.map(_trace, CASES))
   OUT.write_text(HTML.replace("__TRACE_DATA__", json.dumps(traces, separators=(",", ":"))))
+  OUT_JSON.write_text(json.dumps({"schema_version": 1,
+                                  "generated_at": datetime.now(UTC).isoformat(),
+                                  "traces": traces}, separators=(",", ":")))
   print(f"wrote {OUT} ({len(traces)} traces)")
 
 

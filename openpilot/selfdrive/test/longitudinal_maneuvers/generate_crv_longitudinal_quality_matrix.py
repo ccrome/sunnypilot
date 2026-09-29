@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 from concurrent.futures import ProcessPoolExecutor
 from datetime import UTC, datetime
@@ -12,27 +13,63 @@ from pathlib import Path
 import numpy as np
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quality_regression import (
-  COMMAND_DERIVATIVE_P95_MAX,
   A_CRUISE_MIN,
+  COMMAND_DERIVATIVE_P95_MAX,
+  FAR_LEAD_GAP_TIME_S,
   GRADE_FEASIBILITY_MARGIN,
-  TARGET_GAP,
+  LEAD_IN_S,
+  LEAD_SET_SPEED_OVERSHOOT_MPH,
   POST_TARGET_SETTLE_S,
+  ROLLING_LEAD_MAX_JERK_MPS3,
+  ROLLING_LEAD_P95_JERK_MPS3,
+  TARGET_GAP,
   TOTAL_RUN_DURATION_S,
-  _p95_jerk,
-  _p95_command_derivative,
+  _direct_mode_reversals,
   _lead_case_physically_feasible,
-  get_max_accel,
+  _moving_lead_maneuver_quality,
+  _p95_command_derivative,
+  _p95_jerk,
   _run_cruise,
+  _run_far_lead_case,
   _run_lead_case,
+  _run_lead_speed_deviation_case,
+  _run_rolling_lead_stop_case,
   _run_speed_transition,
+  _rolling_lead_stop_time,
+  get_max_accel,
 )
 
 
 OUT = Path(__file__).with_name("crv_longitudinal_quality_matrix.html")
+OUT_JSON = Path(__file__).with_name("crv_longitudinal_quality_matrix_results.json")
 
 
-def row(kind, case, passed, metrics):
-  return {"kind": kind, "case": case, "passed": passed, "metrics": metrics}
+def row(kind, case, passed, metrics, data, target):
+  # Keep the dashboard artifact compact; all gates above use the full 20 Hz
+  # trace. The 2 Hz series preserves maneuver phases and long-run settling.
+  sample = data[::10]
+  indices = ({"time_s": 0, "ego_speed_mph": 1, "acceleration_mps2": 2,
+              "gas_command": 3, "brake_request": 4, "brake_intensity": 5,
+              "actuator_mode": 6, "mode_transitions": 7, "planner_acceleration_mps2": 8}
+             if kind.startswith("Speed") else
+             {"time_s": 0, "ego_speed_mph": 1, "gas_command": 3,
+              "brake_intensity": 4, "brake_request": 5, "actuator_mode": 6,
+              "mode_transitions": 7, "acceleration_mps2": 8,
+              "planner_acceleration_mps2": 9}
+             if kind == "Cruise" else
+             {"time_s": 0, "ego_speed_mph": 1, "gap_m": 2, "time_gap_s": 3,
+              "acceleration_mps2": 4, "lead_speed_mph": 5,
+              "planner_acceleration_mps2": 6, "gas_command": 7,
+              "brake_intensity": 8, "brake_request": 9,
+              "actuator_mode": 10, "mode_transitions": 11,
+              "predictive_brake_mps2": 12, "safety_override": 13})
+  signals = {name: [str(value) if name == "actuator_mode" else float(value)
+                    for value in sample[:, index]] for name, index in indices.items()}
+  signals["target_speed_mph"] = [float(target)] * len(sample)
+  times = np.asarray(signals["time_s"])
+  accel = np.asarray(signals["acceleration_mps2"])
+  signals["jerk_mps3"] = np.gradient(accel, times).tolist()
+  return {"kind": kind, "case": case, "passed": passed, "metrics": metrics, "signals": signals}
 
 
 def _speed_row(start, target):
@@ -62,7 +99,7 @@ def _speed_row(start, target):
                   "settled_error_mph": settled_error, "gas_derivative_p95": gas_d_p95,
                   "brake_derivative_p95": brake_d_p95, "mode": data[-1, 6],
                   "transitions": int(data[-1, 7])})
-  return row(kind, case, passed, metrics)
+  return row(kind, case, passed, metrics, data, target)
 
 
 def _cruise_row(target, grade):
@@ -90,7 +127,7 @@ def _cruise_row(target, grade):
               "required_accel_mps2": required_accel, "gas_span": gas_span,
               "brake_intensity_span": brake_span, "transition_count": transitions,
               "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
-              "jerk_p95": _p95_jerk(settled)})
+              "jerk_p95": _p95_jerk(settled)}, data, target)
 
 
 def _lead_row(ego, closing, stopped):
@@ -116,9 +153,13 @@ def _lead_row(ego, closing, stopped):
   tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
   physical_feasible = _lead_case_physically_feasible(ego, closing, stopped_case)
   safety_engaged = bool(np.any(data[:, 13].astype(bool)))
+  phases, release_speed_error, release_gap = _moving_lead_maneuver_quality(data)
+  maneuver_failure = (phases.count("brake") > 1 or phases.count("gas") > 2
+                      or safety_engaged or release_speed_error > 1.0
+                      or abs(release_gap - TARGET_GAP) > (0.5 if closing >= 40 else 0.25))
   terminal_failure = (not safety_engaged or float(data[-1, 1]) > 0.5 or len(tail) == 0
                       or tail_span > 0.05 or tail_transitions > 2)
-  moving_failure = (min_gap < 1.0
+  moving_failure = (min_gap < 1.0 or maneuver_failure
                     or (recovery_i < len(data) and (recovery_s > 15.0
                         or later_min < recovery_gap - 1e-3))
                     or len(tail) == 0 or tail_target_error > 0.25
@@ -136,7 +177,93 @@ def _lead_row(ego, closing, stopped):
                       "settled_target_error_s": tail_target_error,
                       "settled_mode_transitions": tail_transitions,
                       "gas_derivative_p95": tail_gas_d_p95,
-                      "brake_derivative_p95": tail_brake_d_p95})
+                      "brake_derivative_p95": tail_brake_d_p95,
+                      "maneuver_phases": phases,
+                      "brake_release_speed_error_mph": release_speed_error,
+                      "brake_release_gap_s": release_gap}, data, ego)
+
+
+def _rolling_stop_row(ego):
+  data = _run_rolling_lead_stop_case(ego)
+  times = data[:, 0].astype(float)
+  settled = data[times >= TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S]
+  stopped_tail = data[times >= _rolling_lead_stop_time(ego)]
+  tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
+  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8])
+  tail_transitions = int(settled[-1, 11]) - int(settled[0, 11])
+  maneuver = data[(times >= LEAD_IN_S + 3.0) & (times <= _rolling_lead_stop_time(ego))]
+  maneuver_jerk = np.gradient(maneuver[:, 6].astype(float), 1.0 / 20.0)
+  maneuver_jerk_p95 = float(np.percentile(np.abs(maneuver_jerk), 95))
+  maneuver_jerk_max = float(np.max(np.abs(maneuver_jerk)))
+  minimum_gap = float(np.min(data[:, 2].astype(float)))
+  terminal_speed = float(data[-1, 1])
+  late_acceleration = float(np.max(stopped_tail[:, 4].astype(float)))
+  settled_gap_span = float(np.ptp(settled[:, 3].astype(float)))
+  passed = (minimum_gap >= 1.0 and terminal_speed <= 0.5 and late_acceleration <= 0.05
+            and settled_gap_span <= 0.05 and tail_gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
+            and tail_brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX and tail_transitions <= 2
+            and maneuver_jerk_p95 <= ROLLING_LEAD_P95_JERK_MPS3
+            and maneuver_jerk_max <= ROLLING_LEAD_MAX_JERK_MPS3)
+  return row("Rolling lead stop", f"{ego} mph ego", passed,
+             {"ego_mph": ego, "minimum_gap_m": minimum_gap, "terminal_speed_mph": terminal_speed,
+              "late_acceleration_mps2": late_acceleration, "settled_time_gap_span_s": settled_gap_span,
+              "maneuver_jerk_p95_mps3": maneuver_jerk_p95,
+              "maneuver_jerk_max_mps3": maneuver_jerk_max,
+              "gas_derivative_p95": tail_gas_d_p95, "brake_derivative_p95": tail_brake_d_p95,
+              "settled_mode_transitions": tail_transitions,
+              "safety_engaged": bool(np.any(data[:, 13].astype(bool)))}, data, ego)
+
+
+def _lead_speed_deviation_row(ego, lead, seed):
+  data = _run_lead_speed_deviation_case(ego, lead, seed)
+  times = data[:, 0].astype(float)
+  settled = data[times >= TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S]
+  gaps = data[:, 3].astype(float)
+  tail_modes = settled[:, 10]
+  peak_speed = float(np.max(data[:, 1].astype(float)))
+  tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
+  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8])
+  tail_transitions = int(settled[-1, 11]) - int(settled[0, 11])
+  direct_reversals = _direct_mode_reversals(tail_modes)
+  minimum_time_gap = float(np.min(gaps))
+  overshoot = peak_speed - ego
+  passed = (minimum_time_gap >= 1.0 and overshoot <= LEAD_SET_SPEED_OVERSHOOT_MPH
+            and tail_transitions <= 8 and direct_reversals == 0
+            and tail_gas_d_p95 <= 0.02 and tail_brake_d_p95 <= 0.02)
+  return row("Lead speed deviations", f"{ego} mph ego / {lead} mph nominal / seed {seed}", passed,
+             {"ego_mph": ego, "lead_mph": lead, "seed": seed,
+              "minimum_time_gap_s": minimum_time_gap, "peak_speed_mph": peak_speed,
+              "set_speed_overshoot_mph": overshoot, "gas_derivative_p95": tail_gas_d_p95,
+              "brake_derivative_p95": tail_brake_d_p95, "settled_mode_transitions": tail_transitions,
+              "gas_brake_reversals": direct_reversals}, data, ego)
+
+
+def _far_lead_row(ego):
+  data = _run_far_lead_case(ego)
+  set_speed = ego + 10.0
+  times = data[:, 0].astype(float)
+  settled = data[times >= TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S]
+  time_gap = data[:, 3].astype(float)
+  initial_time_gap = float(data[0, 3])
+  final_time_gap = float(time_gap[-1])
+  peak_speed = float(np.max(data[:, 1].astype(float)))
+  settled_gap_error = float(np.max(np.abs(settled[:, 3].astype(float) - TARGET_GAP)))
+  settled_gap_span = float(np.ptp(settled[:, 3].astype(float)))
+  tail_transitions = int(settled[-1, 11]) - int(settled[0, 11])
+  tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
+  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8])
+  overshoot = peak_speed - set_speed
+  passed = (overshoot <= LEAD_SET_SPEED_OVERSHOOT_MPH
+            and final_time_gap < initial_time_gap - 1.0 and settled_gap_error <= 0.25
+            and settled_gap_span <= 0.05 and tail_transitions <= 2
+            and tail_gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
+            and tail_brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
+  return row("Far lead convergence", f"{set_speed} mph set / {ego} mph lead / {FAR_LEAD_GAP_TIME_S:.1f}s initial gap", passed,
+             {"target_lead_mph": ego, "set_speed_mph": set_speed, "initial_time_gap_s": initial_time_gap,
+              "final_time_gap_s": final_time_gap, "settled_target_error_s": settled_gap_error,
+              "peak_speed_mph": peak_speed, "set_speed_overshoot_mph": overshoot,
+              "settled_time_gap_span_s": settled_gap_span, "settled_mode_transitions": tail_transitions,
+              "gas_derivative_p95": tail_gas_d_p95, "brake_derivative_p95": tail_brake_d_p95}, data, set_speed)
 
 
 def run_matrix():
@@ -152,6 +279,13 @@ def run_matrix():
     for closing in (1, 3, 5, 10, 15, 20, 30, 40):
       for stopped in (False, True):
         jobs.append((_lead_row, (ego, closing, stopped)))
+  for ego in (35, 50):
+    jobs.append((_rolling_stop_row, (ego,)))
+  for case in ((25, 18, 1), (25, 18, 2), (45, 35, 1), (45, 35, 2),
+               (65, 55, 1), (65, 55, 2), (85, 70, 1), (85, 70, 2)):
+    jobs.append((_lead_speed_deviation_row, case))
+  for ego in (25, 45, 65):
+    jobs.append((_far_lead_row, (ego,)))
 
   with ProcessPoolExecutor(max_workers=32) as executor:
     return list(executor.map(_run_job, jobs))
@@ -197,6 +331,9 @@ th {{ background: #222; color: white; position: sticky; top: 0 }} .pass {{ backg
 <table><thead><tr><th>Status</th><th>Matrix</th><th>Case</th><th>Measured diagnostics</th></tr></thead><tbody>{''.join(body)}</tbody></table>
 </body></html>"""
   OUT.write_text(document)
+  OUT_JSON.write_text(json.dumps({"schema_version": 1,
+                                  "generated_at": datetime.now(UTC).isoformat(),
+                                  "results": rows}, default=str, separators=(",", ":")))
   print(f"wrote {OUT} ({passed} pass, {failed} fail, {len(rows)} total)")
 
 

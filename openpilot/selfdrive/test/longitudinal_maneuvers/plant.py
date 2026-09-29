@@ -33,6 +33,7 @@ class Plant:
       Plant.messaging_initialized = True
 
     self.v_lead_prev = 0.0
+    self.lead_visible_prev = False
 
     self.distance = 0.
     self.speed = speed
@@ -93,8 +94,11 @@ class Plant:
     car_state_sp = messaging.new_message('carStateSP')
     live_map_data_sp = messaging.new_message('liveMapDataSP')
     gps_data = messaging.new_message('gpsLocation')
-    a_lead = (v_lead - self.v_lead_prev)/self.ts
+    # Lead acquisition changes the reported speed reference; it is not a
+    # physical one-frame acceleration of the tracked car.
+    a_lead = (v_lead - self.v_lead_prev)/self.ts if self.lead_visible_prev else 0.0
     self.v_lead_prev = v_lead
+    self.lead_visible_prev = bool(self.lead_relevancy and prob_lead > .5)
 
     if self.lead_relevancy:
       d_rel = np.maximum(0., self.distance_lead - self.distance)
@@ -179,7 +183,9 @@ class Plant:
     self.safety_override = bool(getattr(self.planner, "crv_lead_follow_safety_override", False))
     self._update_actuator(self.planner_acceleration)
     self.acceleration = self.planner_acceleration
-    if self.planner.output_should_stop:
+    # Preserve the original stop actuator for legacy, physics-free maneuvers.
+    # The optional physics model instead uses the static stop hold below.
+    if not self.physics and self.planner.output_should_stop:
       self.acceleration = min(-0.5, self.acceleration)
     if self.physics:
       # The planner command is the longitudinal actuator input.  Physics adds
@@ -197,7 +203,10 @@ class Plant:
 
     # ******** run the car ********
     #print(self.distance, speed)
-    if self.speed <= 0:
+    # A stopped vehicle with an active stop command is held by static braking.
+    # Without this, the point-mass plant can creep indefinitely on tiny
+    # positive numerical acceleration despite the planner's stop state.
+    if self.speed <= 0 or (self.physics and self.should_stop and self.speed < 0.05):
       self.speed = 0
       self.acceleration = 0
     self.distance = self.distance + self.speed * self.ts
