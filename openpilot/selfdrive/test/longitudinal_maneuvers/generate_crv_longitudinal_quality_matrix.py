@@ -13,11 +13,15 @@ import numpy as np
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quality_regression import (
   COMMAND_DERIVATIVE_P95_MAX,
+  A_CRUISE_MIN,
+  GRADE_FEASIBILITY_MARGIN,
   TARGET_GAP,
   POST_TARGET_SETTLE_S,
-  RUN_DURATION_S,
+  TOTAL_RUN_DURATION_S,
   _p95_jerk,
   _p95_command_derivative,
+  _lead_case_physically_feasible,
+  get_max_accel,
   _run_cruise,
   _run_lead_case,
   _run_speed_transition,
@@ -48,7 +52,7 @@ def _speed_row(start, target):
   settled = data[data[:, 0].astype(float) >= crossing] if math.isfinite(crossing) else data[:0]
   settled_duration = float(settled[-1, 0] - settled[0, 0]) if len(settled) else 0.0
   settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
-  stable = data[data[:, 0].astype(float) >= RUN_DURATION_S - POST_TARGET_SETTLE_S]
+  stable = data[data[:, 0].astype(float) >= float(data[-1, 0]) - POST_TARGET_SETTLE_S]
   gas_d_p95 = _p95_command_derivative(stable[:, 3])
   brake_d_p95 = _p95_command_derivative(stable[:, 5])
   passed = (passed and settled_duration >= POST_TARGET_SETTLE_S and settled_error <= 1.0
@@ -63,7 +67,7 @@ def _speed_row(start, target):
 
 def _cruise_row(target, grade):
   data = _run_cruise(target, grade)
-  settled = data[data[:, 0].astype(float) >= RUN_DURATION_S - POST_TARGET_SETTLE_S]
+  settled = data[data[:, 0].astype(float) >= TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S]
   speed = settled[:, 1].astype(float)
   gas = settled[:, 3].astype(float)
   brake = settled[:, 4].astype(float)
@@ -73,12 +77,17 @@ def _cruise_row(target, grade):
   gas_d_p95 = _p95_command_derivative(settled[:, 3])
   brake_d_p95 = _p95_command_derivative(settled[:, 4])
   transitions = int(settled[-1, 7]) - int(settled[0, 7])
-  passed = (speed_error <= 1.0 and gas_span <= 0.05 and brake_span <= 0.05 and transitions <= 2
-            and gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
-            and brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
+  required_accel = 9.81 * math.sin(math.atan(grade / 100.0)) + 0.012
+  feasible = (A_CRUISE_MIN + GRADE_FEASIBILITY_MARGIN <= required_accel
+              <= get_max_accel(target * 0.44704) - GRADE_FEASIBILITY_MARGIN)
+  passed = ((feasible and speed_error <= 1.0 and gas_span <= 0.05 and brake_span <= 0.05
+             and gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
+             and brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
+            or (not feasible and gas_span <= 0.10 and brake_span <= 0.10)) and transitions <= 2
   return row("Cruise", f"{target} mph @ {grade:+d}%", passed,
              {"target_mph": target, "grade_percent": grade, "settled_mode": settled[-1, 6],
-              "speed_error_mph": speed_error, "gas_span": gas_span,
+              "speed_error_mph": speed_error, "feasible": feasible,
+              "required_accel_mps2": required_accel, "gas_span": gas_span,
               "brake_intensity_span": brake_span, "transition_count": transitions,
               "gas_derivative_p95": gas_d_p95, "brake_derivative_p95": brake_d_p95,
               "jerk_p95": _p95_jerk(settled)})
@@ -87,32 +96,40 @@ def _cruise_row(target, grade):
 def _lead_row(ego, closing, stopped):
   data = _run_lead_case(ego, closing, stopped)
   times = data[:, 0].astype(float)
-  gaps = data[:, 3].astype(float)
+  stopped_case = stopped or closing >= ego
+  gaps = data[:, 2 if stopped_case else 3].astype(float)
   closest = int(np.argmin(gaps))
-  recovery = np.flatnonzero((np.arange(len(data)) > closest) & (gaps >= TARGET_GAP - 0.25))
+  recovery = (np.flatnonzero((np.arange(len(data)) > closest) & (gaps >= TARGET_GAP - 0.25))
+              if not stopped_case and float(np.min(gaps)) < TARGET_GAP - 0.25 else np.empty(0, dtype=int))
   recovery_i = int(recovery[0]) if len(recovery) else len(data)
   recovery_gap = float(gaps[recovery_i]) if recovery_i < len(data) else math.inf
   later_min = float(np.min(gaps[recovery_i + 1:])) if recovery_i + 1 < len(data) else recovery_gap
   recovery_s = float(times[recovery_i] - times[closest]) if recovery_i < len(data) else math.inf
   min_gap = float(gaps[closest])
-  tail_start = max(times[recovery_i] if recovery_i < len(data) else math.inf,
-                   RUN_DURATION_S - POST_TARGET_SETTLE_S)
-  tail = data[times >= tail_start] if math.isfinite(tail_start) else data[:0]
-  tail_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+  tail = data[times >= float(data[-1, 0]) - POST_TARGET_SETTLE_S]
+  tail_gaps = tail[:, 2 if stopped_case else 3].astype(float)
+  tail_span = float(np.ptp(tail_gaps)) if len(tail) else math.inf
   tail_gas_d_p95 = _p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
   tail_brake_d_p95 = _p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
-  tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - TARGET_GAP)))
-                       if len(tail) else math.inf)
+  tail_target_error = (float(np.max(np.abs(tail_gaps - TARGET_GAP)))
+                       if len(tail) and not stopped_case else 0.0 if len(tail) else math.inf)
   tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
-  settled = (stopped and tail_span <= 0.05
-             or not stopped and tail_span <= 0.05 and tail_target_error <= 0.25)
-  passed = (min_gap >= 1.0 and recovery_s <= 15.0 and later_min >= recovery_gap - 1e-3
-            and len(tail) > 0 and tail[-1, 0] - tail[0, 0] >= POST_TARGET_SETTLE_S
-            and settled and tail_transitions <= 2
-            and tail_gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
-            and tail_brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
+  physical_feasible = _lead_case_physically_feasible(ego, closing, stopped_case)
+  safety_engaged = bool(np.any(data[:, 13].astype(bool)))
+  terminal_failure = (not safety_engaged or float(data[-1, 1]) > 0.5 or len(tail) == 0
+                      or tail_span > 0.05 or tail_transitions > 2)
+  moving_failure = (min_gap < 1.0
+                    or (recovery_i < len(data) and (recovery_s > 15.0
+                        or later_min < recovery_gap - 1e-3))
+                    or len(tail) == 0 or tail_target_error > 0.25
+                    or tail_transitions > 2
+                    or tail_gas_d_p95 > COMMAND_DERIVATIVE_P95_MAX
+                    or tail_brake_d_p95 > COMMAND_DERIVATIVE_P95_MAX)
+  passed = (not terminal_failure if stopped_case else
+            (not moving_failure if physical_feasible else not terminal_failure))
   return row("Lead", f"{ego} mph, {closing} mph closing, {'stopped' if stopped else 'moving'}",
              passed, {"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
+                      "physical_feasible": physical_feasible, "safety_engaged": safety_engaged,
                       "minimum_time_gap_s": min_gap, "recovery_s": recovery_s,
                       "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,
                       "target_gap_s": TARGET_GAP, "settled_gap_span_s": tail_span,

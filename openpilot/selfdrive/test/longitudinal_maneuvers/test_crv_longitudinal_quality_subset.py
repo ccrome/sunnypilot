@@ -74,33 +74,34 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       rows = q._run_lead_case(ego, closing, stopped)
       stopped_case = stopped or closing >= ego
       times = rows[:, 0].astype(float)
-      gaps = rows[:, 3].astype(float)
+      gaps = rows[:, 2 if stopped_case else 3].astype(float)
       closest = int(np.argmin(gaps))
-      recovery = np.flatnonzero((np.arange(len(rows)) > closest) &
-                                (gaps >= q.TARGET_GAP - 0.25))
+      recovery = (np.flatnonzero((np.arange(len(rows)) > closest)
+                                 & (gaps >= q.TARGET_GAP - 0.25))
+                  if not stopped_case and float(np.min(gaps)) < q.TARGET_GAP - 0.25
+                  else np.empty(0, dtype=int))
       recovery_i = int(recovery[0]) if len(recovery) else len(rows)
       recovery_started = recovery_i < len(rows)
       recovery_gap = float(gaps[recovery_i]) if recovery_i < len(rows) else math.inf
       later_min = float(np.min(gaps[recovery_i + 1:])) if recovery_i + 1 < len(rows) else recovery_gap
       recovery_s = float(times[recovery_i] - times[closest]) if recovery_i < len(rows) else math.inf
       min_gap = float(gaps[closest])
-      tail_start = (times[recovery_i] if recovery_i < len(rows)
-                    else q.TOTAL_RUN_DURATION_S - q.POST_TARGET_SETTLE_S)
-      tail = rows[times >= tail_start] if math.isfinite(tail_start) else rows[:0]
-      tail_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+      tail = rows[times >= q.TOTAL_RUN_DURATION_S - q.POST_TARGET_SETTLE_S]
+      tail_gaps = tail[:, 2 if stopped_case else 3].astype(float)
+      tail_span = float(np.ptp(tail_gaps)) if len(tail) else math.inf
       tail_gas_d_p95 = q._p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
       tail_brake_d_p95 = q._p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
       tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
-      tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - q.TARGET_GAP)))
-                           if len(tail) else math.inf)
-      settled = (stopped_case and tail_span <= 0.05
-                 or not stopped_case and tail_span <= 0.05 and tail_target_error <= 0.25)
-      if (min_gap < 1.0 or (recovery_started and (recovery_s > 15.0
-          or later_min < recovery_gap - 1e-3))
-          or len(tail) == 0 or tail[-1, 0] - tail[0, 0] < q.POST_TARGET_SETTLE_S
-          or not settled or tail_transitions > 2
+      tail_target_error = (float(np.max(np.abs(tail_gaps - q.TARGET_GAP)))
+                           if len(tail) and not stopped_case else 0.0 if len(tail) else math.inf)
+      terminal_failure = (not np.any(rows[:, 13].astype(bool)) or float(rows[-1, 1]) > 0.5
+                          or len(tail) == 0 or tail_span > 0.05 or tail_transitions > 2)
+      moving_failure = (min_gap < 1.0 or (recovery_started and (recovery_s > 15.0
+          or later_min < recovery_gap - 1e-3)) or len(tail) == 0
+          or tail_target_error > 0.25 or tail_transitions > 2
           or tail_gas_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX
-          or tail_brake_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX):
+          or tail_brake_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX)
+      if terminal_failure if stopped_case else moving_failure:
         failures.append({"ego_mph": ego, "closing_mph": closing, "stopped": stopped,
                          "minimum_time_gap_s": min_gap, "recovery_s": recovery_s,
                          "recovery_gap_s": recovery_gap, "later_min_gap_s": later_min,

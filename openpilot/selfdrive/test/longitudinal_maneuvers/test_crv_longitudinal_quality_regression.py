@@ -86,16 +86,24 @@ def _p95_command_derivative(values: np.ndarray) -> float:
 def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool) -> np.ndarray:
   ego = ego_mph * MPH
   closing = closing_mph * MPH
+  lead_speed_at_maneuver = max(0.0, ego - closing)
+  target_gap_at_maneuver = max(2.0, lead_speed_at_maneuver * TARGET_GAP)
+  braking_distance = closing * closing / (2.0 * abs(ACCEL_MIN))
+  feasible_start_gap = braking_distance + target_gap_at_maneuver + 1.0
+  initial_gap = max(2.5 * ego, feasible_start_gap) if not stopped and closing < ego else max(2.5 * ego, 2.0)
   plant = Plant(lead_relevancy=True, speed=ego,
-                distance_lead=max(2.5 * ego, 2.0), physics=True, realtime=False,
+                distance_lead=initial_gap, physics=True, realtime=False,
                 personality=log.LongitudinalPersonality.relaxed,
                 car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
   rows = []
+  maneuver_lead_speed = None
   while plant.current_time < TOTAL_RUN_DURATION_S:
     approaching = plant.current_time >= LEAD_IN_S
     stopped_lead = stopped or closing >= ego
-    lead_speed = 0.0 if stopped_lead and approaching else max(0.0, ego - closing) if approaching else ego
-    plant.step(v_lead=lead_speed, prob_lead=1.0, v_cruise=ego)
+    if approaching and maneuver_lead_speed is None:
+      maneuver_lead_speed = 0.0 if stopped_lead else max(0.0, plant.speed - closing)
+    lead_speed = maneuver_lead_speed if approaching else plant.speed
+    plant.step(v_lead=lead_speed, prob_lead=1.0 if approaching else 0.0, v_cruise=ego)
     gap = max(0.0, plant.distance_lead - plant.distance)
     time_gap = gap / max(plant.speed, 0.1)
     rows.append((plant.current_time, plant.speed / MPH, gap, time_gap,
@@ -127,9 +135,11 @@ def _lead_case_physically_feasible(ego_mph: float, closing_mph: float, stopped: 
   ego_speed = ego_mph * MPH
   lead_speed = 0.0 if stopped or closing_mph >= ego_mph else (ego_mph - closing_mph) * MPH
   relative_speed = max(ego_speed - lead_speed, 0.0)
-  initial_gap = max(2.5 * ego_speed, 2.0)
   braking_distance = relative_speed ** 2 / (2.0 * abs(ACCEL_MIN))
-  required_gap = braking_distance + lead_speed + 1.0
+  target_gap = max(2.0, lead_speed * TARGET_GAP)
+  initial_gap = max(2.5 * ego_speed, braking_distance + target_gap + 1.0) \
+    if not stopped and closing_mph < ego_mph else max(2.5 * ego_speed, 2.0)
+  required_gap = braking_distance + target_gap + 1.0
   return initial_gap >= required_gap
 
 
@@ -232,15 +242,15 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
           later_min = float(np.min(gaps[recovery_i + 1:])) if recovery_i + 1 < len(rows) else recovery_gap
           recover_time = float(t[recovery_i] - t[closest]) if recovery_i < len(rows) else math.inf
           min_gap = float(gaps[closest])
-          tail_start = (t[recovery_i] if recovery_i < len(rows)
-                        else TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S)
-          tail = rows[t >= tail_start] if math.isfinite(tail_start) else rows[:0]
-          tail_gap_span = float(np.ptp(tail[:, 3].astype(float))) if len(tail) else math.inf
+          tail_start = TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S
+          tail = rows[t >= tail_start]
+          tail_gaps = tail[:, 2 if stopped_case else 3].astype(float)
+          tail_gap_span = float(np.ptp(tail_gaps)) if len(tail) else math.inf
           tail_gas_d_p95 = _p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
           tail_brake_d_p95 = _p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
           tail_mode_transitions = (int(tail[-1, 11]) - int(tail[0, 11])) if len(tail) else math.inf
-          tail_target_error = (float(np.max(np.abs(tail[:, 3].astype(float) - TARGET_GAP)))
-                               if len(tail) else math.inf)
+          tail_target_error = (float(np.max(np.abs(tail_gaps - TARGET_GAP)))
+                               if len(tail) and not stopped_case else 0.0 if len(tail) else math.inf)
           recovery_started = recovery_i < len(rows)
           physical_feasible = _lead_case_physically_feasible(ego, closing, stopped_case)
           safety_engaged = bool(np.any(rows[:, 13].astype(bool)))

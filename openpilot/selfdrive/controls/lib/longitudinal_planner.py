@@ -60,7 +60,7 @@ CRV_LEAD_FOLLOW_SAFETY_TTC = 3.5
 # Direct feedback on the two coupled goals: reach the lead velocity while
 # arriving at its desired following gap.  The intercept term below supplies
 # the trajectory, and the plant/actuator dynamics provide the response shape.
-CRV_LEAD_FOLLOW_COUPLED_GAP_GAIN = 0.05
+CRV_LEAD_FOLLOW_COUPLED_GAP_GAIN = 0.12
 CRV_LEAD_FOLLOW_COUPLED_VELOCITY_GAIN = 0.30
 # Normal following uses a comfort jerk envelope.  The rate rises continuously
 # as a closing lead consumes the available TTC margin; the independent safety
@@ -323,10 +323,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
         (1.0 - closing_blend) * (
           CRV_LEAD_FOLLOW_COUPLED_GAP_GAIN * gap_error
           + CRV_LEAD_FOLLOW_COUPLED_VELOCITY_GAIN * relative_speed)
-        + closing_blend * min(
-          CRV_LEAD_FOLLOW_COUPLED_GAP_GAIN * gap_error
-          + CRV_LEAD_FOLLOW_COUPLED_VELOCITY_GAIN * relative_speed,
-          intercept_accel))
+        + closing_blend * intercept_accel)
       coupled_target = np.clip(
         coupled_target,
         ACCEL_MIN, ACCEL_MAX)
