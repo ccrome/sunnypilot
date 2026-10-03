@@ -4,13 +4,18 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import math
+from dataclasses import asdict
 from concurrent.futures import ProcessPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+import subprocess
 
 import numpy as np
+
+from openpilot.selfdrive.test.longitudinal_maneuvers.honda_vehicle import HondaDynamics
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quality_regression import (
   A_CRUISE_MIN,
@@ -66,6 +71,8 @@ def row(kind, case, passed, metrics, data, target):
   signals = {name: [str(value) if name == "actuator_mode" else float(value)
                     for value in sample[:, index]] for name, index in indices.items()}
   signals["controller_acceleration_mps2"] = [float(value) for value in sample[:, -1]]
+  signals["observed_speed_mph"] = [float(value) for value in sample[:, -3]]
+  signals["observed_acceleration_mps2"] = [float(value) for value in sample[:, -2]]
   signals["target_speed_mph"] = [float(target)] * len(sample)
   times = np.asarray(signals["time_s"])
   accel = np.asarray(signals["acceleration_mps2"])
@@ -158,7 +165,7 @@ def _lead_row(ego, closing, stopped):
   maneuver_failure = (phases.count("brake") > 1 or phases.count("gas") > 2
                       or safety_engaged or release_speed_error > 1.0
                       or abs(release_gap - TARGET_GAP) > (0.5 if closing >= 40 else 0.25))
-  terminal_failure = (not safety_engaged or float(data[-1, 1]) > 0.5 or len(tail) == 0
+  terminal_failure = (min_gap < 0.0 or float(data[-1, 1]) > 0.5 or len(tail) == 0
                       or tail_span > 0.05 or tail_transitions > 2)
   moving_failure = (min_gap < 1.0 or maneuver_failure
                     or (recovery_i < len(data) and (recovery_s > 15.0
@@ -304,6 +311,13 @@ def _crossing(data, target, start):
 
 
 def write_report(rows):
+  root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+  paths = {"planner_sha256": "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
+           "inner_sha256": "openpilot/selfdrive/controls/lib/longcontrol.py",
+           "plant_sha256": "openpilot/selfdrive/test/longitudinal_maneuvers/honda_vehicle.py"}
+  metadata = {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "dynamics": asdict(HondaDynamics()),
+              **{k: hashlib.sha256((root / p).read_bytes()).hexdigest() for k, p in paths.items()}}
   passed = sum(r["passed"] for r in rows)
   failed = len(rows) - passed
   body = []
@@ -328,12 +342,15 @@ th {{ background: #222; color: white; position: sticky; top: 0 }} .pass {{ backg
 </style></head><body>
 <h1>CR-V longitudinal quality regression matrix</h1>
 <p>Generated {generated}. Gates: {gate_text}.</p>
+<p>Local simulation, not a hardware validation. Source base {metadata['source_commit'][:12]};
+planner SHA-256 {metadata['planner_sha256']}. Includes the calibrated actuator and openpilot speed observer.</p>
 <p class='summary'><span class='count'>{passed} PASS</span> &nbsp; <span class='count'>{failed} FAIL</span> &nbsp; {len(rows)} total cases</p>
 <table><thead><tr><th>Status</th><th>Matrix</th><th>Case</th><th>Measured diagnostics</th></tr></thead><tbody>{''.join(body)}</tbody></table>
 </body></html>"""
   OUT.write_text(document)
   OUT_JSON.write_text(json.dumps({"schema_version": 1,
                                   "generated_at": datetime.now(UTC).isoformat(),
+                                  **metadata,
                                   "results": rows}, default=str, separators=(",", ":")))
   print(f"wrote {OUT} ({passed} pass, {failed} fail, {len(rows)} total)")
 

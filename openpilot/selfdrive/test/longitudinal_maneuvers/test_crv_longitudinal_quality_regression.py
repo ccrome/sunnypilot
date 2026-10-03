@@ -61,20 +61,26 @@ def _jerk_limited_braking_distance(relative_speed: float) -> float:
   return ramp_distance + remaining_speed ** 2 / (2.0 * max_decel)
 
 
-def _run_speed_transition(start_mph: float, target_mph: float) -> np.ndarray:
+def _run_speed_transition(start_mph: float, target_mph: float, actuator_parameters=None) -> np.ndarray:
   plant = Plant(speed=start_mph * MPH, physics=True, realtime=False,
-                car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
+                car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE, actuator_parameters=actuator_parameters)
   # Keep the trace alive well beyond the crossing.  The quality gate must see
   # the complete post-transition behavior, not just the instant the target is
   # first reached.
   duration = LEAD_IN_S + max(RUN_DURATION_S, abs(target_mph - start_mph) * 0.8 + POST_TARGET_SETTLE_S)
+  crossed = False
   rows = []
   while plant.current_time < duration:
     v_cruise = start_mph * MPH if plant.current_time < LEAD_IN_S else target_mph * MPH
     plant.step(v_cruise=v_cruise)
+    if (not crossed and plant.current_time >= LEAD_IN_S
+        and np.sign(target_mph - start_mph) * (plant.speed / MPH - target_mph) >= 0):
+      crossed = True
+      duration = max(duration, plant.current_time + POST_TARGET_SETTLE_S + DT)
     rows.append((plant.current_time, plant.speed / MPH, plant.acceleration,
                  plant.gas_command, float(plant.brake_request), plant.brake_intensity,
-                 plant.actuator_mode, plant.mode_transitions, plant.planner_acceleration, plant.vehicle.output))
+                 plant.actuator_mode, plant.mode_transitions, plant.planner_acceleration,
+                 plant.vehicle.measured_speed / MPH, plant.vehicle.measured_acceleration, plant.vehicle.output))
   return np.asarray(rows, dtype=object)
 
 
@@ -98,7 +104,8 @@ def _run_cruise(target_mph: float, grade_percent: int) -> np.ndarray:
     rows.append((plant.current_time, plant.speed / MPH, grade_percent,
                  plant.gas_command, plant.brake_intensity, plant.brake_request,
                  plant.actuator_mode, plant.mode_transitions, plant.acceleration,
-                 plant.planner_acceleration, plant.vehicle.output))
+                 plant.planner_acceleration, plant.vehicle.measured_speed / MPH,
+                 plant.vehicle.measured_acceleration, plant.vehicle.output))
   return np.asarray(rows, dtype=object)
 
 
@@ -178,7 +185,7 @@ def _lead_speed_deviation_profile(base_lead_mph: float, seed: int):
 
 
 def _run_lead_profile(ego_mph: float, profile: str, lead_speed_mph: float = 0.0,
-                      initial_gap: float | None = None, seed: int = 0) -> np.ndarray:
+                      initial_gap: float | None = None, seed: int = 0, actuator_parameters=None) -> np.ndarray:
   ego = ego_mph * MPH
   if initial_gap is None:
     relative_speed = max(ego - lead_speed_mph * MPH, 0.0)
@@ -190,7 +197,7 @@ def _run_lead_profile(ego_mph: float, profile: str, lead_speed_mph: float = 0.0,
   plant = Plant(lead_relevancy=True, speed=ego,
                 distance_lead=initial_gap, physics=True, realtime=False,
                 personality=log.LongitudinalPersonality.relaxed,
-                car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE)
+                car_fingerprint=CAR.HONDA_CRV_5G, sim_rate=SIM_RATE, actuator_parameters=actuator_parameters)
   deviation_times = deviation_speeds = None
   if profile == "deviation":
     deviation_times, deviation_speeds = _lead_speed_deviation_profile(lead_speed_mph, seed)
@@ -211,34 +218,36 @@ def _run_lead_profile(ego_mph: float, profile: str, lead_speed_mph: float = 0.0,
     else:
       raise ValueError(f"unknown lead profile: {profile}")
     plant.step(v_lead=lead_speed, prob_lead=1.0 if approaching else 0.0, v_cruise=ego)
-    gap = max(0.0, plant.distance_lead - plant.distance)
+    # Keep signed clearance: clamping at zero conceals an actual collision.
+    gap = plant.distance_lead - plant.distance
     time_gap = gap / max(plant.speed, 0.1)
     rows.append((plant.current_time, plant.speed / MPH, gap, time_gap,
                  plant.acceleration, lead_speed / MPH, plant.planner_acceleration,
                  plant.gas_command, plant.brake_intensity, plant.brake_request,
                  plant.actuator_mode, plant.mode_transitions,
-                 plant.predictive_brake, plant.safety_override, plant.vehicle.output))
+                 plant.predictive_brake, plant.safety_override, plant.vehicle.measured_speed / MPH,
+                 plant.vehicle.measured_acceleration, plant.vehicle.output))
   return np.asarray(rows, dtype=object)
 
 
-def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool) -> np.ndarray:
+def _run_lead_case(ego_mph: float, closing_mph: float, stopped: bool, actuator_parameters=None) -> np.ndarray:
   # Keep this helper in mph at its boundary.  Passing the converted m/s value
   # into _run_lead_profile would apply MPH a second time and make the labeled
   # closing-speed cases harsher than requested.
-  lead_speed_at_maneuver = max(0.0, ego_mph - closing_mph)
   stopped_lead = stopped or closing_mph >= ego_mph
+  lead_speed_at_maneuver = 0.0 if stopped_lead else max(0.0, ego_mph - closing_mph)
   profile = "stopped" if stopped_lead else "fixed"
-  return _run_lead_profile(ego_mph, profile, lead_speed_at_maneuver)
+  return _run_lead_profile(ego_mph, profile, lead_speed_at_maneuver, actuator_parameters=actuator_parameters)
 
 
-def _run_rolling_lead_stop_case(ego_mph: float) -> np.ndarray:
+def _run_rolling_lead_stop_case(ego_mph: float, actuator_parameters=None) -> np.ndarray:
   ego = ego_mph * MPH
   braking_distance = _jerk_limited_braking_distance(ego)
   initial_gap = max(2.5 * ego, braking_distance + 2.0)
-  return _run_lead_profile(ego_mph, "rolling_stop", initial_gap=initial_gap)
+  return _run_lead_profile(ego_mph, "rolling_stop", initial_gap=initial_gap, actuator_parameters=actuator_parameters)
 
 
-def _run_lead_speed_deviation_case(ego_mph: float, lead_mph: float, seed: int) -> np.ndarray:
+def _run_lead_speed_deviation_case(ego_mph: float, lead_mph: float, seed: int, actuator_parameters=None) -> np.ndarray:
   ego = ego_mph * MPH
   worst_relative_speed = max(ego - (lead_mph - 3.0 * LEAD_SPEED_DEVIATION_STD_MPH) * MPH, 0.0)
   braking_distance = _jerk_limited_braking_distance(worst_relative_speed)
@@ -246,14 +255,14 @@ def _run_lead_speed_deviation_case(ego_mph: float, lead_mph: float, seed: int) -
   initial_gap = max(2.5 * ego,
                     braking_distance + target_gap + LEAD_INITIAL_GAP_MARGIN_M
                     + ego * LEAD_INITIAL_TIME_MARGIN_S)
-  return _run_lead_profile(ego_mph, "deviation", lead_mph, initial_gap, seed)
+  return _run_lead_profile(ego_mph, "deviation", lead_mph, initial_gap, seed, actuator_parameters)
 
 
-def _run_far_lead_case(target_lead_mph: float) -> np.ndarray:
+def _run_far_lead_case(target_lead_mph: float, actuator_parameters=None) -> np.ndarray:
   set_speed_mph = target_lead_mph + 10.0
   ego = set_speed_mph * MPH
   initial_gap = FAR_LEAD_GAP_TIME_S * ego
-  return _run_lead_profile(set_speed_mph, "fixed", target_lead_mph, initial_gap)
+  return _run_lead_profile(set_speed_mph, "fixed", target_lead_mph, initial_gap, actuator_parameters=actuator_parameters)
 
 
 def _parallel_runs(function, cases):
@@ -293,8 +302,7 @@ def _lead_case_physically_feasible(ego_mph: float, closing_mph: float, stopped: 
   target_gap = max(2.0, lead_speed * TARGET_GAP)
   initial_gap = max(2.5 * ego_speed,
                     braking_distance + target_gap + LEAD_INITIAL_GAP_MARGIN_M
-                    + ego_speed * LEAD_INITIAL_TIME_MARGIN_S) \
-    if not stopped and closing_mph < ego_mph else max(2.5 * ego_speed, 2.0)
+                    + ego_speed * LEAD_INITIAL_TIME_MARGIN_S)
   required_gap = braking_distance + target_gap + LEAD_INITIAL_GAP_MARGIN_M
   return initial_gap >= required_gap
 

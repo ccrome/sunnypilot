@@ -1,0 +1,127 @@
+{
+  "train_routes": [
+    "0000003d--430a4b475f",
+    "0000003a--5fa3fea7bc"
+  ],
+  "validation_routes": [
+    "0000003b--a28eefbb10"
+  ],
+  "observer_replay": {
+    "0000003d--430a4b475f": {
+      "speed_rmse": 2.209451541049639e-07,
+      "acceleration_rmse": 2.1704591971959395e-08,
+      "raw_repeat_fraction": 0.5158730158730159
+    },
+    "0000003a--5fa3fea7bc": {
+      "speed_rmse": 2.525572579478438e-07,
+      "acceleration_rmse": 1.2881445485730874e-08,
+      "raw_repeat_fraction": 0.6104927051685175
+    },
+    "0000003b--a28eefbb10": {
+      "speed_rmse": 5.127891475432712e-07,
+      "acceleration_rmse": 1.0786848815290135e-08,
+      "raw_repeat_fraction": 0.5171716370558376
+    }
+  },
+  "previous_model": {
+    "0000003d--430a4b475f": {
+      "windows": 13,
+      "speed_rmse_mps": 0.8425216006065825,
+      "acceleration_rmse_mps2": 0.3565106791043895
+    },
+    "0000003a--5fa3fea7bc": {
+      "windows": 158,
+      "speed_rmse_mps": 0.6282504504319586,
+      "acceleration_rmse_mps2": 0.28042796616993
+    },
+    "0000003b--a28eefbb10": {
+      "windows": 561,
+      "speed_rmse_mps": 0.7632068278676883,
+      "acceleration_rmse_mps2": 0.30789700478423687
+    }
+  },
+  "models": {
+    "gas_effort": {
+      "parameters": {
+        "gas_gain": 1.6039975061277718,
+        "brake_gain": 0.9250346736769617,
+        "gas_tau": 0.5578959887535101,
+        "gas_release_tau": 0.12216244408826861,
+        "brake_tau": 0.5270463552732969,
+        "delay": 0.05,
+        "rolling": 0.18879805332849783,
+        "drag": 0.0003692757684653929
+      },
+      "training_cost": 71.99783543903673,
+      "optimizer_success": true,
+      "routes": {
+        "0000003d--430a4b475f": {
+          "windows": 13,
+          "speed_rmse_mps": 0.3802665443333465,
+          "acceleration_rmse_mps2": 0.20734815582239977
+        },
+        "0000003a--5fa3fea7bc": {
+          "windows": 158,
+          "speed_rmse_mps": 0.2962873198477427,
+          "acceleration_rmse_mps2": 0.16016041439907808
+        },
+        "0000003b--a28eefbb10": {
+          "windows": 561,
+          "speed_rmse_mps": 0.3237677667968309,
+          "acceleration_rmse_mps2": 0.14030917615846028
+        }
+      }
+    },
+    "acceleration_request": {
+      "parameters": {
+        "gas_gain": 1.6912875328197496,
+        "brake_gain": 0.9896743413325523,
+        "gas_tau": 0.8055535960631541,
+        "gas_release_tau": 0.05560315329513144,
+        "brake_tau": 0.5473669919484409,
+        "delay": 0.05,
+        "rolling": 0.12741834635129143,
+        "drag": 2.7791627847538103e-14
+      },
+      "training_cost": 129.8924998051159,
+      "optimizer_success": true,
+      "routes": {
+        "0000003d--430a4b475f": {
+          "windows": 13,
+          "speed_rmse_mps": 0.40803726807893875,
+          "acceleration_rmse_mps2": 0.21533108096627585
+        },
+        "0000003a--5fa3fea7bc": {
+          "windows": 158,
+          "speed_rmse_mps": 0.6129769807888971,
+          "acceleration_rmse_mps2": 0.25229723749800115
+        },
+        "0000003b--a28eefbb10": {
+          "windows": 561,
+          "speed_rmse_mps": 0.7027954030640899,
+          "acceleration_rmse_mps2": 0.25851141132758115
+        }
+      }
+    }
+  },
+  "simulation_dynamics": {
+    "gas_gain": 1.604,
+    "gas_tau": 0.5579,
+    "gas_release_tau": 0.1222,
+    "brake_gain": 0.925,
+    "brake_tau": 0.527,
+    "delay": 0.05,
+    "rolling": 0.1888,
+    "drag": 0.0003693,
+    "speed_sample_period": 0.02,
+    "speed_quantum": 0.0006944444444444445,
+    "speed_noise_std": 0.006,
+    "seed": 0
+  },
+  "limitations": [
+    "Grey-box dynamics, not a Honda ECU emulator",
+    "Five-second rollout validation",
+    "Pitch calibration and unobserved load remain uncertainties",
+    "Noise distribution is a deterministic uncertainty proxy, not uniquely identified"
+  ]
+}

@@ -168,8 +168,8 @@ class Plant:
     ss.selfdriveState.experimentalMode = self.e2e
     ss.selfdriveState.personality = self.personality
     control.controlsState.forceDecel = self.force_decel
-    car_state.carState.vEgo = float(self.speed)
-    car_state.carState.aEgo = float(self.acceleration)
+    car_state.carState.vEgo = float(self.vehicle.measured_speed if self.full_system else self.speed)
+    car_state.carState.aEgo = float(self.vehicle.measured_acceleration if self.full_system else self.acceleration)
     car_state.carState.standstill = bool(self.speed < 0.01)
     car_state.carState.vCruise = float(v_cruise * 3.6)
     car_control.carControl.orientationNED = [0., float(pitch), 0.]

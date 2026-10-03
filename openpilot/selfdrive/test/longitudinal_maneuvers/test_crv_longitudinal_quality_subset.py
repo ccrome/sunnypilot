@@ -18,8 +18,8 @@ from openpilot.selfdrive.test.longitudinal_maneuvers import test_crv_longitudina
 class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
   def test_representative_speed_transitions(self):
     failures = []
-    for start, target in ((0, 15), (0, 45), (0, 75), (90, 45), (90, 15)):
-      rows = q._run_speed_transition(start, target)
+    cases = [(0, 15), (0, 45), (0, 75), (90, 45), (90, 15)]
+    for (start, target), rows in zip(cases, q._parallel_runs(q._run_speed_case, cases), strict=True):
       speed = rows[:, 1].astype(float)
       crossing = q._crossing_time(rows, target, start)
       extreme = float(np.max(speed) if target > start else np.min(speed))
@@ -43,8 +43,8 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
 
   def test_representative_cruise_grades(self):
     failures = []
-    for target, grade in ((30, 0), (30, -3), (30, 3)):
-      rows = q._run_cruise(target, grade)
+    cases = [(30, 0), (30, -3), (30, 3)]
+    for (target, grade), rows in zip(cases, q._parallel_runs(q._run_cruise_case, cases), strict=True):
       settled = rows[rows[:, 0].astype(float) >= q.TOTAL_RUN_DURATION_S - q.POST_TARGET_SETTLE_S]
       speed_error = float(np.max(np.abs(settled[:, 1].astype(float) - target)))
       gas_span = float(np.ptp(settled[:, 3].astype(float)))
@@ -69,9 +69,8 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
 
   def test_representative_lead_recovery(self):
     failures = []
-    for ego, closing, stopped in ((25, 10, False), (45, 20, False),
-                                  (65, 10, False), (25, 15, True)):
-      rows = q._run_lead_case(ego, closing, stopped)
+    cases = [(25, 10, False), (45, 20, False), (65, 10, False), (25, 15, True)]
+    for (ego, closing, stopped), rows in zip(cases, q._parallel_runs(q._run_lead_case_spec, cases), strict=True):
       stopped_case = stopped or closing >= ego
       times = rows[:, 0].astype(float)
       gaps = rows[:, 2 if stopped_case else 3].astype(float)
@@ -94,7 +93,8 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
       tail_target_error = (float(np.max(np.abs(tail_gaps - q.TARGET_GAP)))
                            if len(tail) and not stopped_case else 0.0 if len(tail) else math.inf)
-      terminal_failure = (not np.any(rows[:, 13].astype(bool)) or float(rows[-1, 1]) > 0.5
+      # Successful planned stopping need not engage the emergency fallback.
+      terminal_failure = (min_gap < 1.0 or float(rows[-1, 1]) > 0.5
                           or len(tail) == 0 or tail_span > 0.05 or tail_transitions > 2)
       moving_failure = (min_gap < 1.0 or (recovery_started and (recovery_s > 15.0
           or later_min < recovery_gap - 1e-3)) or len(tail) == 0

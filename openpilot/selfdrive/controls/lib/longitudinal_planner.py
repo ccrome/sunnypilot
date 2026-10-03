@@ -9,7 +9,7 @@ from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
-from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState, CRV_BRAKE_EFFORT_GAIN, CRV_BRAKE_RESPONSE_TIME
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import MPC_SOURCES, LongitudinalMpc, LongitudinalPlanSource
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import get_safe_obstacle_distance, get_stopped_equivalence_factor, get_T_FOLLOW
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
@@ -25,10 +25,10 @@ A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
 # acceleration target still forms the plateau; the planner's jerk state shapes
 # the ramp in and ramp out instead of asking the plant to absorb a step.
 J_CRUISE_VALS = [0.8, 0.7, 0.6, 0.5]
-CRV_ACCEL_RESPONSE_WN = 0.9
-CRV_ACCEL_EMERGENCY_RESPONSE_WN = 1.2
+CRV_ACCEL_RESPONSE_WN = 4.0
+CRV_ACCEL_EMERGENCY_RESPONSE_WN = 8.0
 CRV_ACCEL_MAX_SNAP = 4.0
-CRV_ACCEL_EMERGENCY_MAX_SNAP = 20.0
+CRV_ACCEL_EMERGENCY_MAX_SNAP = 200.0
 A_CRUISE_MIN = -1.2
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
@@ -152,7 +152,7 @@ def smooth_deadzone(value, width):
 
 
 def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, throttle_authority,
-                     speed_error_bias=0.0, measured_accel=0.0):
+                     speed_error_bias=0.0, planned_accel=0.0):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
 
   if not e2e:
@@ -174,7 +174,7 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
   # The reference is net acceleration. Road-load effort belongs to the
   # acceleration tracking loop, not to this speed/gap reference.
   target_accel = np.clip(CRV_CRUISE_SPEED_GAIN * (v_cruise - v_ego)
-                         - 0.6 * measured_accel + speed_error_bias,
+                         - 0.6 * planned_accel + speed_error_bias,
                          A_CRUISE_MIN, max_accel)
   return float(target_accel)
 
@@ -190,6 +190,55 @@ def update_accel_scurve(target_accel, current_accel, jerk_prev, dt, max_jerk,
   jerk = np.clip(jerk_prev + snap * dt, -max_jerk, max_jerk)
   accel = np.clip(current_accel + jerk * dt, ACCEL_MIN, ACCEL_MAX)
   return float(accel), float(jerk)
+
+
+def closing_braking_reachability(closing_speed, acceleration, reaction_time,
+                                 max_decel=-ACCEL_MIN, max_jerk=CRV_LEAD_FOLLOW_EMERGENCY_BRAKE_JERK,
+                                 lead_speed=0.0, time_gap=1.0, standstill_gap=2.0):
+  """Relative travel before matching a constant-speed lead under bounded jerk.
+
+  Hold measured acceleration during the response interval, then ramp to full
+  braking. Stop integrating at the velocity match, including a match during
+  either interval. Also find the clearance needed to maintain time_gap at
+  every point, not a fixed distance based on ego's initial speed. This is a
+  reachability bound, not an everyday target.
+  """
+  closing_speed = max(0.0, closing_speed)
+  acceleration = float(np.clip(acceleration, -max_decel, ACCEL_MAX))
+  delay = min(reaction_time, (closing_speed + max(acceleration, 0.0) * reaction_time)
+              / max(-acceleration, 1e-6))
+  delayed_closing = max(0.0, closing_speed + acceleration * delay)
+  delay_distance = closing_speed * delay + 0.5 * acceleration * delay ** 2
+  ramp_time = min((acceleration + max_decel) / max_jerk,
+                  (acceleration + math.sqrt(acceleration ** 2 + 2.0 * max_jerk * delayed_closing)) / max_jerk)
+  ramp_distance = (delayed_closing * ramp_time + 0.5 * acceleration * ramp_time ** 2
+                   - max_jerk * ramp_time ** 3 / 6.0)
+  remaining_closing = max(0.0, delayed_closing + acceleration * ramp_time - 0.5 * max_jerk * ramp_time ** 2)
+  distance = max(0.0, delay_distance + ramp_distance + remaining_closing ** 2 / (2.0 * max_decel))
+  # Extrema of relative travel + headway * ego speed in each interval.
+  # Its derivative is relative speed + headway * acceleration.
+  delay_peak = float(np.clip(-(closing_speed + time_gap * acceleration)
+                              / math.copysign(max(abs(acceleration), 1e-6), acceleration), 0.0, delay))
+  delay_peak_distance = closing_speed * delay_peak + 0.5 * acceleration * delay_peak ** 2
+  delay_peak_speed = max(0.0, closing_speed + acceleration * delay_peak)
+  ramp_peak = float(np.clip((acceleration - time_gap * max_jerk
+                              + math.sqrt(acceleration ** 2 + (time_gap * max_jerk) ** 2
+                                          + 2.0 * max_jerk * delayed_closing)) / max_jerk,
+                            0.0, ramp_time))
+  ramp_peak_distance = (delayed_closing * ramp_peak + 0.5 * acceleration * ramp_peak ** 2
+                        - max_jerk * ramp_peak ** 3 / 6.0)
+  ramp_peak_speed = max(0.0, delayed_closing + acceleration * ramp_peak - 0.5 * max_jerk * ramp_peak ** 2)
+  brake_peak = max(0.0, remaining_closing / max_decel - time_gap)
+  brake_peak_distance = remaining_closing * brake_peak - 0.5 * max_decel * brake_peak ** 2
+  brake_peak_speed = max(0.0, remaining_closing - max_decel * brake_peak)
+  required_clearance = max(
+    distance + standstill_gap,
+    time_gap * (lead_speed + closing_speed),
+    delay_distance + time_gap * (lead_speed + delayed_closing),
+    delay_peak_distance + time_gap * (lead_speed + delay_peak_speed),
+    delay_distance + ramp_peak_distance + time_gap * (lead_speed + ramp_peak_speed),
+    delay_distance + ramp_distance + brake_peak_distance + time_gap * (lead_speed + brake_peak_speed))
+  return distance, delayed_closing, required_clearance
 
 
 def crv_follow_maneuver(elapsed, duration, closing_speed, target_gap):
@@ -371,7 +420,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                                     accel_coast, self.throttle_authority, self.crv_cruise_speed_i, sm['carState'].aEgo)
+                                     accel_coast, self.throttle_authority, self.crv_cruise_speed_i, self.output_a_target)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     tracked_leads = [lead for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo) if lead.present]
@@ -389,27 +438,38 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       # One continuously recomputed gap/velocity controller. A timed maneuver
       # becomes stale when the lead or the actuator response changes.
       self.crv_follow_duration = 0.0
-      lead_follow_accel = (CRV_FOLLOW_SPEED_GAIN * (closest_lead.vLead - v_ego)
-                           + CRV_FOLLOW_GAP_GAIN * excess_gap
-                           - 0.4 * sm['carState'].aEgo)
+      # Couple the response bandwidth to the remaining intercept time. For
+      # constant leads, the closing-dominated term approaches -3*c*c/(4*gap):
+      # both relative speed and acceleration then vanish at the terminal gap.
+      # The base bandwidth still closes a distant gap from zero relative speed.
+      response_speed = abs(ACCEL_MIN) * action_t
+      intercept_authority = closing_speed ** 2 / (closing_speed ** 2 + response_speed ** 2)
+      follow_frequency = math.sqrt(CRV_FOLLOW_GAP_GAIN) \
+        + 0.5 * closing_speed * intercept_authority / max(excess_gap, 2.0)
+      lead_follow_accel = (follow_frequency ** 2 * excess_gap
+                           + 2.0 * follow_frequency * (closest_lead.vLead - v_ego)
+                           - 0.4 * a_prev)
       braking_pressure = float(np.clip(-lead_follow_accel / abs(ACCEL_MIN), 0.0, 1.0))
       self.crv_lead_follow_jerk_limit = (CRV_LEAD_FOLLOW_COMFORT_BRAKE_JERK
         + braking_pressure * (CRV_LEAD_FOLLOW_EMERGENCY_BRAKE_JERK - CRV_LEAD_FOLLOW_COMFORT_BRAKE_JERK))
-      predicted_min_gap = closest_lead.dRel - closing_speed * action_t \
-        - closing_speed ** 2 / (2.0 * abs(ACCEL_MIN))
-      minimum_terminal_gap = max(2.0, v_ego)
+      # A first-order brake step loses at most tau*(a_initial + max_decel)
+      # velocity relative to instant braking. Holding the initial acceleration
+      # for tau before the jerk-limited ramp is a conservative response
+      # envelope, not a new TTC threshold or a delayed feedback filter.
+      max_brake_decel = abs(ACCEL_MIN) * CRV_BRAKE_EFFORT_GAIN
+      braking_distance, delayed_closing, required_clearance = closing_braking_reachability(
+        closing_speed, sm['carState'].aEgo, action_t + CRV_BRAKE_RESPONSE_TIME,
+        max_decel=max_brake_decel, lead_speed=closest_lead.vLead)
       lead_follow_accel += float(np.clip(closest_lead.aLeadK, -2.0, 2.0))
       lead_follow_accel = min(lead_follow_accel, self.a_cruise)
 
       # The time-gap floor is a reachability constraint: when a smooth match
       # cannot preserve one second under jerk-limited braking, request the
       # necessary deceleration from the same acceleration trajectory.
-      safety_gap = max(2.0, v_ego)
-      uncommitted_brake_fraction = 1.0 - np.clip(-a_prev / abs(ACCEL_MIN), 0.0, 1.0)
-      safety_margin = (closest_lead.dRel - safety_gap
-                       - closing_speed * action_t * uncommitted_brake_fraction)
-      safety_accel = -closing_speed ** 2 / (2.0 * max(safety_margin, 0.1))
-      safety_required = predicted_min_gap < minimum_terminal_gap
+      response_distance = braking_distance - delayed_closing ** 2 / (2.0 * max_brake_decel)
+      safety_margin = closest_lead.dRel - (required_clearance - braking_distance) - response_distance
+      safety_accel = -delayed_closing ** 2 / (2.0 * max(safety_margin, 0.1))
+      safety_required = closest_lead.dRel < required_clearance
       self.crv_lead_follow_safety_override = bool(safety_required and closing_speed > 0.1)
       lead_follow_accel = min(lead_follow_accel, safety_accel) if self.crv_lead_follow_safety_override else lead_follow_accel
       lead_candidate = float(np.clip(lead_follow_accel, ACCEL_MIN, ACCEL_MAX))
@@ -547,14 +607,10 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
                      if emergency_response else 0.0)
     if not self.is_crv_5g:
       self.output_a_target = output_a_target
-    elif lead_follow_active:
-      # The terminal maneuver already specifies a jerk-continuous acceleration
-      # curve. A second response filter would delay the entire brake phase.
-      self.output_a_target = float(np.clip(output_a_target,
-                                          a_prev - jerk_limit * self.dt,
-                                          a_prev + jerk_limit * self.dt))
-      self.crv_accel_jerk = (self.output_a_target - a_prev) / self.dt
     else:
+      # One acceleration/jerk state for cruise and following. Snap bounds the
+      # start and end of ordinary maneuvers without filtering measured state.
+      # Emergency pressure opens the envelope instead of delaying hard brakes.
       self.output_a_target, self.crv_accel_jerk = update_accel_scurve(
         output_a_target, a_prev, self.crv_accel_jerk, self.dt, jerk_limit,
         CRV_ACCEL_RESPONSE_WN + response_pressure *

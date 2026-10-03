@@ -53,6 +53,7 @@ def _trace_to_result(trace):
     "gap_m": trace.get("gap"),
     "time_gap_s": trace.get("time_gap"),
     "acceleration_mps2": trace.get("accel"),
+    "observed_acceleration_mps2": trace.get("observed_accel"),
     "planner_acceleration_mps2": trace.get("planner_accel"),
     "predictive_brake_mps2": trace.get("predictive_brake"),
     "safety_override": trace.get("safety"),
@@ -177,6 +178,7 @@ def _trace_figure(record):
   add("lead mph", "lead_speed_mph", 1, "#d35400")
   add("target mph", "target_speed_mph", 1, "#777", "dot")
   add("physical m/s²", "acceleration_mps2", 2, "#00897b")
+  add("openpilot observed m/s²", "observed_acceleration_mps2", 2, "#795548", "dot")
   add("planner m/s²", "planner_acceleration_mps2", 2, "#7b1fa2", "dot")
   add("predictive brake", "predictive_brake_mps2", 2, "#c62828", "dot")
   add("safety override", "safety_override", 2, "#111", "dash")

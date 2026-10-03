@@ -10,6 +10,34 @@ from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 
 
 class TestCrvLongitudinalFeedback(OpenpilotTestCase):
+  def test_positive_maneuver_does_not_brake_for_one_acceleration_sample(self):
+    """Latest-drive 168.432 s: positive target, transient high aEgo."""
+    cp = CarInterface.get_non_essential_params(CAR.HONDA_CRV_5G)
+    sp = CarInterface.get_non_essential_params_sp(cp, CAR.HONDA_CRV_5G)
+    controller = LongControl(cp, sp)
+    controller.pid.i = -0.146
+    state = SimpleNamespace(aEgo=.607, vEgo=8.694, brakePressed=False,
+                            cruiseState=SimpleNamespace(standstill=False))
+    output = controller.update(True, state, .107, False, (-3.5, 2.0))
+    assert output > 0
+    assert controller.pid.p == 0
+    assert -.15 < controller.pid.i < -.146  # Correction accumulates, never resets.
+
+  def test_zero_mean_acceleration_disturbance_does_not_cycle_pedals(self):
+    cp = CarInterface.get_non_essential_params(CAR.HONDA_CRV_5G)
+    sp = CarInterface.get_non_essential_params_sp(cp, CAR.HONDA_CRV_5G)
+    for speed in (5., 15., 30.):
+      controller = LongControl(cp, sp)
+      state = SimpleNamespace(aEgo=0., vEgo=speed, brakePressed=False,
+                              cruiseState=SimpleNamespace(standstill=False))
+      outputs = []
+      for n in range(200):
+        state.aEgo = .1 + (.5 if n % 2 else -.5)
+        outputs.append(controller.update(True, state, .1, False, (-3.5, 2.)))
+      assert min(outputs) > 0
+      assert max(outputs) - min(outputs) < .002
+      assert abs(controller.pid.i) < 1e-9
+
   def test_low_speed_brake_undershoot_accumulates_bounded_negative_feedback(self):
     """Persistent low-speed creep must strengthen a negative brake request."""
     CP = CarInterface.get_non_essential_params(CAR.HONDA_CRV_5G)

@@ -10,6 +10,15 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
+# CAN-input identification, not per-speed controller tuning. GAS_COMMAND
+# full scale represents 2.2 in the fitted plant but the CR-V encoder maps an
+# effort command of 2.0 to full scale. Keep that unit conversion explicit.
+CRV_DRIVE_EFFORT_GAIN = 1.6040 * 2.2 / 2.0
+CRV_BRAKE_EFFORT_GAIN = 0.9250
+CRV_BRAKE_RESPONSE_TIME = 0.5270
+CRV_ROLLING_ACCEL = 0.1888
+CRV_DRAG_COEFFICIENT = 0.0003693
+
 
 def long_control_state_trans(CP_SP, active, long_control_state,
                              should_stop, brake_pressed, cruise_standstill):
@@ -45,9 +54,14 @@ class LongControl:
     self.CP = CP
     self.CP_SP = CP_SP
     self.long_control_state = LongCtrlState.off
-    self.pid = PIDController(0.5 if CP.carFingerprint == CAR.HONDA_CRV_5G else 0.0,
+    self.pid = PIDController(0.0,
                              0.4 if CP.carFingerprint == CAR.HONDA_CRV_5G else (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
                              rate=1 / DT_CTRL)
+    crv = CP.carFingerprint == CAR.HONDA_CRV_5G
+    self.drive_gain = CRV_DRIVE_EFFORT_GAIN if crv else 1.0
+    self.brake_gain = CRV_BRAKE_EFFORT_GAIN if crv else 1.0
+    self.rolling = CRV_ROLLING_ACCEL if crv else 0.0
+    self.drag = CRV_DRAG_COEFFICIENT if crv else 0.0
     self.last_output_accel = 0.0
 
   def reset(self):
@@ -55,8 +69,8 @@ class LongControl:
 
   def update(self, active, CS, a_target, should_stop, accel_limits):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
-    self.pid.neg_limit = accel_limits[0]
-    self.pid.pos_limit = accel_limits[1]
+    self.pid.neg_limit = accel_limits[0] * self.brake_gain
+    self.pid.pos_limit = accel_limits[1] * self.drive_gain
 
     self.long_control_state = long_control_state_trans(self.CP_SP, active, self.long_control_state,
                                                        should_stop, CS.brakePressed,
@@ -75,8 +89,14 @@ class LongControl:
 
     else:  # LongCtrlState.pid
       error = a_target - CS.aEgo
-      output_accel = self.pid.update(error, speed=CS.vEgo,
-                                     feedforward=a_target)
+      # Integrating acceleration error is velocity-error feedback. It does
+      # not differentiate noisy wheel speeds again or switch pedals for a
+      # single acceleration sample. Feedforward supplies the identified road
+      # load and converts net acceleration to actuator effort; the integral
+      # learns the remaining load/grade error continuously.
+      effort = self.pid.update(error, speed=CS.vEgo,
+                               feedforward=a_target + self.rolling + self.drag * CS.vEgo ** 2)
+      output_accel = max(effort, 0.0) / self.drive_gain + min(effort, 0.0) / self.brake_gain
 
     self.last_output_accel = np.clip(output_accel, accel_limits[0], accel_limits[1])
     return self.last_output_accel
