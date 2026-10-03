@@ -138,11 +138,19 @@ def _moving_lead_maneuver_quality(rows: np.ndarray) -> tuple[list[str], float, f
   modes = maneuver[:, 10]
   changes = np.flatnonzero(modes[1:] != modes[:-1]) + 1
   phases = [str(modes[0]), *(str(modes[i]) for i in changes)]
-  releases = [i for i in changes if modes[i - 1] == "brake" and modes[i] == "gas"]
-  if not releases:
-    return phases, 0.0, TARGET_GAP
-  release = maneuver[releases[0]]
-  return phases, abs(float(release[1]) - float(release[5])), float(release[3])
+  speed = maneuver[:, 1].astype(float)
+  lead_speed = maneuver[:, 5].astype(float)
+  undershoot = float(max(0.0, np.max(lead_speed - speed)))
+  braking = np.flatnonzero(modes == "brake")
+  if not len(braking):
+    return phases, undershoot, TARGET_GAP
+  # Positive Honda effort can balance drag while net acceleration remains
+  # negative. Pedal release is not a velocity match. Measure the actual first
+  # entry into the unchanged one-mph velocity tolerance after braking begins.
+  matched = np.flatnonzero((np.arange(len(maneuver)) >= braking[0])
+                           & (np.abs(speed - lead_speed) <= 1.0))
+  match_gap = float(maneuver[matched[0], 3]) if len(matched) else math.inf
+  return phases, undershoot, match_gap
 
 
 def _rolling_lead_speed(ego_mph: float, elapsed_s: float) -> float:
@@ -418,12 +426,14 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       recovery_started = recovery_i < len(rows)
       physical_feasible = _lead_case_physically_feasible(ego, closing, stopped_case)
       safety_engaged = bool(np.any(rows[:, 13].astype(bool)))
-      phases, release_speed_error, release_gap = _moving_lead_maneuver_quality(rows)
-      maneuver_failure = (len([mode for mode in phases if mode == "brake"]) > 1
-                          or len([mode for mode in phases if mode == "gas"]) > 2
-                          or safety_engaged
-                          or release_speed_error > 1.0
-                          or abs(release_gap - TARGET_GAP) > (0.5 if closing >= 40 else 0.25))
+      phases, speed_undershoot, match_gap = _moving_lead_maneuver_quality(rows)
+      # Safety interventions remain subject to clearance, velocity undershoot,
+      # recovery and settled-command gates. Emergency pedal reversals alone
+      # are not a failure; ordinary maneuvers still require one brake phase.
+      maneuver_failure = (speed_undershoot > 1.0 or not math.isfinite(match_gap)
+                          or (not safety_engaged and (phases.count("brake") > 1
+                              or phases.count("gas") > 2
+                              or abs(match_gap - TARGET_GAP) > 0.25)))
       # Emergency intervention is an observation, not a prerequisite for a
       # successful planned stop. Require a collision-free, stable stop either
       # way; ordinary braking must not fail merely for avoiding the fallback.
@@ -450,8 +460,8 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
                          "brake_derivative_p95": tail_brake_d_p95,
                          "settled_mode_transitions": tail_mode_transitions,
                          "maneuver_phases": phases,
-                         "brake_release_speed_error_mph": release_speed_error,
-                         "brake_release_gap_s": release_gap})
+                         "velocity_undershoot_mph": speed_undershoot,
+                         "velocity_match_gap_s": match_gap})
     assert not failures, f"CR-V fast-closing lead failures: {failures}"
 
   def test_rolling_lead_stop_does_not_restart_or_hunt(self):
@@ -462,7 +472,7 @@ class TestCrvLongitudinalQualityRegression(OpenpilotTestCase):
       speed = rows[:, 1].astype(float)
       gap = rows[:, 2].astype(float)
       stopped_tail = rows[times >= _rolling_lead_stop_time(ego)]
-      maneuver = rows[(times >= LEAD_IN_S + 3.0) & (times <= LEAD_IN_S + 26.0)]
+      maneuver = rows[(times >= LEAD_IN_S + 3.0) & (times <= _rolling_lead_stop_time(ego))]
       settled = rows[times >= TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S]
       tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
       tail_brake_d_p95 = _p95_command_derivative(settled[:, 8], 0.01 / 3.5)

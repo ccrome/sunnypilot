@@ -161,10 +161,11 @@ def _lead_row(ego, closing, stopped):
   tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
   physical_feasible = _lead_case_physically_feasible(ego, closing, stopped_case)
   safety_engaged = bool(np.any(data[:, 13].astype(bool)))
-  phases, release_speed_error, release_gap = _moving_lead_maneuver_quality(data)
-  maneuver_failure = (phases.count("brake") > 1 or phases.count("gas") > 2
-                      or safety_engaged or release_speed_error > 1.0
-                      or abs(release_gap - TARGET_GAP) > (0.5 if closing >= 40 else 0.25))
+  phases, speed_undershoot, match_gap = _moving_lead_maneuver_quality(data)
+  maneuver_failure = (speed_undershoot > 1.0 or not math.isfinite(match_gap)
+                      or (not safety_engaged and (phases.count("brake") > 1
+                          or phases.count("gas") > 2
+                          or abs(match_gap - TARGET_GAP) > 0.25)))
   terminal_failure = (min_gap < 0.0 or float(data[-1, 1]) > 0.5 or len(tail) == 0
                       or tail_span > 0.05 or tail_transitions > 2)
   moving_failure = (min_gap < 1.0 or maneuver_failure
@@ -187,8 +188,8 @@ def _lead_row(ego, closing, stopped):
                       "gas_derivative_p95": tail_gas_d_p95,
                       "brake_derivative_p95": tail_brake_d_p95,
                       "maneuver_phases": phases,
-                      "brake_release_speed_error_mph": release_speed_error,
-                      "brake_release_gap_s": release_gap}, data, ego)
+                      "velocity_undershoot_mph": speed_undershoot,
+                      "velocity_match_gap_s": match_gap}, data, ego)
 
 
 def _rolling_stop_row(ego):

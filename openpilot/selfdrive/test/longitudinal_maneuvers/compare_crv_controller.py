@@ -19,7 +19,8 @@ import numpy as np
 from openpilot.selfdrive.test.longitudinal_maneuvers.honda_vehicle import HondaDynamics
 
 
-BASELINE = "d896499f511aa57806ed3c81ea6caf30da2b961c"
+# Immutable source baseline corresponding to installer revision ddb4774.
+BASELINE = "d907af5b275f2650641152a44172d6728f1392d6"
 PLANNER = "openpilot/selfdrive/controls/lib/longitudinal_planner.py"
 INNER = "openpilot/selfdrive/controls/lib/longcontrol.py"
 CASES = [("speed", 0, 15), ("speed", 90, 15),

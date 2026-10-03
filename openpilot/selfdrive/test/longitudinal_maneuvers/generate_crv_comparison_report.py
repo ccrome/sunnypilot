@@ -16,12 +16,13 @@ SIGNALS = {"time_s": "time", "ego_speed_mph": "ego", "lead_speed_mph": "lead",
            "gap_m": "gap", "time_gap_s": "time_gap", "safety_override": "safety",
            "predictive_brake_mps2": "predictive_brake"}
 HTML = r'''<!doctype html><html><head><meta charset="utf-8">
-<title>CR-V installed versus experimental controller</title>
+<title>CR-V immutable baseline versus evaluated controller</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>body{font:14px system-ui;margin:24px}select{font:16px system-ui;padding:8px}
 table{border-collapse:collapse;margin:16px 0}td,th{padding:5px 12px;border:1px solid #ddd;text-align:left}</style>
-</head><body><h1>Installed versus experimental controller</h1>
-<p id="revision"></p><p>Installed: dashed. Candidate: solid. Same inputs and vehicle response in each pair.
+</head><body><h1>Immutable baseline versus evaluated controller</h1>
+<p id="revision"></p><p>Baseline: dashed. Evaluated controller: solid. Same inputs and vehicle response in each pair.
+The baseline is the recorded source revision, not necessarily the version currently installed on comma4.
 Actuator variants probe uncertainty; they are not independently calibrated vehicles. No automatic refresh.</p>
 <select id="case"></select><table id="metrics"></table><div id="plot"></div><script>
 const data=__DATA__, n=data.results.length/2, select=document.getElementById('case');
@@ -29,9 +30,9 @@ document.getElementById('revision').textContent=`Baseline ${data.baseline_commit
 for(let i=0;i<n;i++){const r=data.results[i],o=document.createElement('option');o.value=i;o.textContent=`${r.response}: ${r.case.join(' / ')}`;select.appendChild(o)}
 function render(){const i=Number(select.value), a=data.results[i],b=data.results[i+n], series=[];
 const table=document.getElementById('metrics');table.replaceChildren();
-const header=document.createElement('tr');for(const x of ['Metric','Installed','Candidate']){const c=document.createElement('th');c.textContent=x;header.appendChild(c)}table.appendChild(header);
+const header=document.createElement('tr');for(const x of ['Metric','Baseline','Evaluated controller']){const c=document.createElement('th');c.textContent=x;header.appendChild(c)}table.appendChild(header);
 for(const k of Object.keys(a.metrics)){const row=document.createElement('tr');for(const v of [k,a.metrics[k],b.metrics[k]]){const c=document.createElement('td');c.textContent=typeof v==='number'?v.toFixed(4):v;row.appendChild(c)}table.appendChild(row)}
-for(const [j,r] of [[i,a],[i+n,b]]){const t=data.traces[j],name=r.variant,dash=name==='installed'?'dash':'solid';
+for(const [j,r] of [[i,a],[i+n,b]]){const t=data.traces[j],name=r.variant==='installed'?'baseline':'evaluated',dash=name==='baseline'?'dash':'solid';
 const add=(label,key,color,xaxis,yaxis)=>{if(t[key]!=null)series.push({x:t.time,y:t[key],name:`${name} ${label}`,type:'scatter',mode:'lines',line:{color,dash,width:1.8},xaxis,yaxis})};
 add('ego mph','ego','#1769aa','x','y');add('planner accel','planner_accel','#7b1fa2','x2','y2');add('physical accel','accel','#00897b','x2','y2');
 add('observed accel','observed_accel','#795548','x2','y2');add('Honda effort command','controller_accel','#9467bd','x2','y2');
