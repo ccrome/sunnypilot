@@ -4,6 +4,7 @@ from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
+from opendbc.car.honda.values import CAR
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
@@ -44,7 +45,8 @@ class LongControl:
     self.CP = CP
     self.CP_SP = CP_SP
     self.long_control_state = LongCtrlState.off
-    self.pid = PIDController(0.0, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
+    self.pid = PIDController(0.5 if CP.carFingerprint == CAR.HONDA_CRV_5G else 0.0,
+                             0.4 if CP.carFingerprint == CAR.HONDA_CRV_5G else (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
                              rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
 

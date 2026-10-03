@@ -21,7 +21,7 @@ class Plant:
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
                enabled=True, only_lead2=False, only_radar=False, e2e=False, personality=0, force_decel=False,
                car_fingerprint=None, physics=False, realtime=True, rolling_resistance=0.012,
-               sim_rate=None):
+               sim_rate=None, full_system=None, actuator_parameters=None):
     self.rate = float(sim_rate) if sim_rate is not None else 1. / DT_MDL
 
     if not Plant.messaging_initialized:
@@ -75,6 +75,12 @@ class Plant:
     CP_SP = CarInterface.get_non_essential_params_sp(CP, car_fingerprint)
     self.planner = LongitudinalPlanner(CP, CP_SP, init_v=self.speed)
     self.CP = CP
+    self.full_system = car_fingerprint == CAR.HONDA_CRV_5G if full_system is None else full_system
+    self.vehicle = None
+    if self.full_system:
+      from openpilot.selfdrive.test.longitudinal_maneuvers.honda_vehicle import HondaVehicle
+      CP.openpilotLongitudinalControl = True
+      self.vehicle = HondaVehicle(CP, CP_SP, self.speed, actuator_parameters)
 
   @property
   def current_time(self):
@@ -156,12 +162,14 @@ class Plant:
     model.modelV2.acceleration = acceleration
     model.modelV2.meta.disengagePredictions.gasPressProbs = [float(prob_throttle) for _ in range(6)]
 
-    control.controlsState.longControlState = LongCtrlState.pid if self.enabled else LongCtrlState.off
+    control.controlsState.longControlState = (self.vehicle.longitudinal.long_control_state if self.full_system
+                                              else LongCtrlState.pid if self.enabled else LongCtrlState.off)
     ss.selfdriveState.enabled = self.enabled
     ss.selfdriveState.experimentalMode = self.e2e
     ss.selfdriveState.personality = self.personality
     control.controlsState.forceDecel = self.force_decel
     car_state.carState.vEgo = float(self.speed)
+    car_state.carState.aEgo = float(self.acceleration)
     car_state.carState.standstill = bool(self.speed < 0.01)
     car_state.carState.vCruise = float(v_cruise * 3.6)
     car_control.carControl.orientationNED = [0., float(pitch), 0.]
@@ -181,13 +189,23 @@ class Plant:
     self.planner_acceleration = float(self.planner.output_a_target)
     self.predictive_brake = float(getattr(self.planner, "crv_lead_follow_predictive_brake", 0.0))
     self.safety_override = bool(getattr(self.planner, "crv_lead_follow_safety_override", False))
-    self._update_actuator(self.planner_acceleration)
-    self.acceleration = self.planner_acceleration
+    if self.full_system:
+      self.speed, self.acceleration = self.vehicle.step(
+        self.planner_acceleration, self.planner.output_should_stop, self.enabled, pitch, self.ts, v_cruise)
+      command_accel, gas, self.brake_request = self.vehicle.command
+      self.gas_command = gas / 1600.0
+      self.brake_intensity = max(0.0, -command_accel / abs(ACCEL_MIN)) if self.brake_request else 0.0
+      self.actuator_mode = 'brake' if self.brake_request else 'gas' if gas > 0 else 'coast'
+      self.mode_transitions += int(self.actuator_mode != self._last_actuator_mode)
+      self._last_actuator_mode = self.actuator_mode
+    else:
+      self._update_actuator(self.planner_acceleration)
+      self.acceleration = self.planner_acceleration
     # Preserve the original stop actuator for legacy, physics-free maneuvers.
     # The optional physics model instead uses the static stop hold below.
-    if not self.physics and self.planner.output_should_stop:
+    if not self.full_system and not self.physics and self.planner.output_should_stop:
       self.acceleration = min(-0.5, self.acceleration)
-    if self.physics:
+    if self.physics and not self.full_system:
       # The planner command is the longitudinal actuator input.  Physics adds
       # deterministic grade gravity and rolling resistance so a level/grade
       # cruise must actually balance the road load.
@@ -196,7 +214,8 @@ class Plant:
       grade_accel = -9.81 * np.sin(float(pitch))
       rolling = self.rolling_resistance if self.speed > 0.01 else 0.0
       self.acceleration += grade_accel - np.sign(self.speed if self.speed > 0.01 else self.acceleration) * rolling
-    self.speed = self.speed + self.acceleration * self.ts
+    if not self.full_system:
+      self.speed = self.speed + self.acceleration * self.ts
     self.should_stop = self.planner.output_should_stop
     fcw = self.planner.fcw
     self.distance_lead = self.distance_lead + v_lead * self.ts
@@ -206,7 +225,7 @@ class Plant:
     # A stopped vehicle with an active stop command is held by static braking.
     # Without this, the point-mass plant can creep indefinitely on tiny
     # positive numerical acceleration despite the planner's stop state.
-    if self.speed <= 0 or (self.physics and self.should_stop and self.speed < 0.05):
+    if self.speed <= 0 or (not self.full_system and self.physics and self.should_stop and self.speed < 0.05):
       self.speed = 0
       self.acceleration = 0
     self.distance = self.distance + self.speed * self.ts
@@ -246,6 +265,8 @@ class Plant:
       "mode_transitions": self.mode_transitions,
       "predictive_brake": self.predictive_brake,
       "safety_override": self.safety_override,
+      "controller_acceleration": self.vehicle.output if self.full_system else self.planner_acceleration,
+      "full_system": self.full_system,
     }
 
   def _update_actuator(self, accel):

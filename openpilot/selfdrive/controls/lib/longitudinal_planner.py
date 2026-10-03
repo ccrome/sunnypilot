@@ -152,7 +152,7 @@ def smooth_deadzone(value, width):
 
 
 def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, throttle_authority,
-                     speed_error_bias=0.0):
+                     speed_error_bias=0.0, measured_accel=0.0):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
 
   if not e2e:
@@ -171,10 +171,10 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
                            A_CRUISE_MIN, max_accel)
     j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
     return float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
-  transient_accel = a_cruise_prev - grade_accel
+  # The reference is net acceleration. Road-load effort belongs to the
+  # acceleration tracking loop, not to this speed/gap reference.
   target_accel = np.clip(CRV_CRUISE_SPEED_GAIN * (v_cruise - v_ego)
-                         - CRV_CRUISE_ACCEL_DAMPING * transient_accel
-                         + speed_error_bias + grade_accel,
+                         - 0.6 * measured_accel + speed_error_bias,
                          A_CRUISE_MIN, max_accel)
   return float(target_accel)
 
@@ -371,7 +371,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                                     accel_coast, self.throttle_authority, self.crv_cruise_speed_i)
+                                     accel_coast, self.throttle_authority, self.crv_cruise_speed_i, sm['carState'].aEgo)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     tracked_leads = [lead for lead in (sm['radarState'].leadOne, sm['radarState'].leadTwo) if lead.present]
@@ -386,45 +386,18 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       desired_lead_gap = max(2.0, closest_lead.vLead * t_follow)
       closing_speed = max(v_ego - closest_lead.vLead, 0.0)
       excess_gap = closest_lead.dRel - desired_lead_gap
-      maneuver_time = 2.0 * max(excess_gap, 0.0) / max(closing_speed, 0.1)
-
-      # Start a single maneuver once the lead is within a finite planning
-      # horizon. A distant lead stays on the cruise reference until then.
-      if self.crv_follow_duration == 0.0 and closing_speed > CRV_FOLLOW_MIN_CLOSING_SPEED and excess_gap > 0.0 \
-          and maneuver_time <= CRV_FOLLOW_MAX_MANEUVER_TIME:
-        self.crv_follow_duration = max(maneuver_time, self.dt)
-        self.crv_follow_elapsed = 0.0
-        self.crv_follow_closing_speed = closing_speed
-
-      if self.crv_follow_duration > 0.0 and self.crv_follow_elapsed < self.crv_follow_duration:
-        reference_closing_speed, reference_gap, reference_accel = crv_follow_maneuver(
-          self.crv_follow_elapsed, self.crv_follow_duration,
-          self.crv_follow_closing_speed, desired_lead_gap)
-        reference_speed = closest_lead.vLead + reference_closing_speed
-        lead_follow_accel = (reference_accel
-                             + CRV_FOLLOW_SPEED_GAIN * (reference_speed - v_ego)
-                             + CRV_FOLLOW_GAP_GAIN * (closest_lead.dRel - reference_gap))
-        self.crv_lead_follow_jerk_limit = min(
-          CRV_LEAD_FOLLOW_EMERGENCY_BRAKE_JERK,
-          max(CRV_LEAD_FOLLOW_COMFORT_BRAKE_JERK,
-              CRV_FOLLOW_SMOOTHSTEP_PEAK_JERK * self.crv_follow_closing_speed
-              / self.crv_follow_duration ** 2))
-        remaining_time = self.crv_follow_duration - self.crv_follow_elapsed
-        closing_error = closing_speed - reference_closing_speed
-        predicted_min_gap = (closest_lead.dRel + desired_lead_gap
-                             - reference_gap - max(closing_error, 0.0) * remaining_time / 2.0)
-        minimum_terminal_gap = max(2.0, closest_lead.vLead)
-        self.crv_follow_elapsed += self.dt
-      else:
-        self.crv_follow_duration = 0.0
-        self.crv_lead_follow_jerk_limit = CRV_LEAD_FOLLOW_COMFORT_BRAKE_JERK
-        lead_follow_accel = (self.a_cruise if excess_gap > 0.0
-                             and maneuver_time > CRV_FOLLOW_MAX_MANEUVER_TIME
-                             else CRV_FOLLOW_SPEED_GAIN * (closest_lead.vLead - v_ego)
-                             + CRV_FOLLOW_GAP_GAIN * excess_gap)
-        predicted_min_gap = closest_lead.dRel - closing_speed * action_t \
-          - closing_speed ** 2 / (2.0 * abs(ACCEL_MIN))
-        minimum_terminal_gap = max(2.0, v_ego)
+      # One continuously recomputed gap/velocity controller. A timed maneuver
+      # becomes stale when the lead or the actuator response changes.
+      self.crv_follow_duration = 0.0
+      lead_follow_accel = (CRV_FOLLOW_SPEED_GAIN * (closest_lead.vLead - v_ego)
+                           + CRV_FOLLOW_GAP_GAIN * excess_gap
+                           - 0.4 * sm['carState'].aEgo)
+      braking_pressure = float(np.clip(-lead_follow_accel / abs(ACCEL_MIN), 0.0, 1.0))
+      self.crv_lead_follow_jerk_limit = (CRV_LEAD_FOLLOW_COMFORT_BRAKE_JERK
+        + braking_pressure * (CRV_LEAD_FOLLOW_EMERGENCY_BRAKE_JERK - CRV_LEAD_FOLLOW_COMFORT_BRAKE_JERK))
+      predicted_min_gap = closest_lead.dRel - closing_speed * action_t \
+        - closing_speed ** 2 / (2.0 * abs(ACCEL_MIN))
+      minimum_terminal_gap = max(2.0, v_ego)
       lead_follow_accel += float(np.clip(closest_lead.aLeadK, -2.0, 2.0))
       lead_follow_accel = min(lead_follow_accel, self.a_cruise)
 

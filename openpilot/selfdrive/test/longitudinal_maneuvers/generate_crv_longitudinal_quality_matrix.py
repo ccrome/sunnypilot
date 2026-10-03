@@ -65,6 +65,7 @@ def row(kind, case, passed, metrics, data, target):
               "predictive_brake_mps2": 12, "safety_override": 13})
   signals = {name: [str(value) if name == "actuator_mode" else float(value)
                     for value in sample[:, index]] for name, index in indices.items()}
+  signals["controller_acceleration_mps2"] = [float(value) for value in sample[:, -1]]
   signals["target_speed_mph"] = [float(target)] * len(sample)
   times = np.asarray(signals["time_s"])
   accel = np.asarray(signals["acceleration_mps2"])
@@ -91,7 +92,7 @@ def _speed_row(start, target):
   settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
   stable = data[data[:, 0].astype(float) >= float(data[-1, 0]) - POST_TARGET_SETTLE_S]
   gas_d_p95 = _p95_command_derivative(stable[:, 3])
-  brake_d_p95 = _p95_command_derivative(stable[:, 5])
+  brake_d_p95 = _p95_command_derivative(stable[:, 5], 0.01 / 3.5)
   passed = (passed and settled_duration >= POST_TARGET_SETTLE_S and settled_error <= 1.0
             and gas_d_p95 <= COMMAND_DERIVATIVE_P95_MAX
             and brake_d_p95 <= COMMAND_DERIVATIVE_P95_MAX)
@@ -112,7 +113,7 @@ def _cruise_row(target, grade):
   gas_span = float(np.ptp(gas))
   brake_span = float(np.ptp(brake))
   gas_d_p95 = _p95_command_derivative(settled[:, 3])
-  brake_d_p95 = _p95_command_derivative(settled[:, 4])
+  brake_d_p95 = _p95_command_derivative(settled[:, 4], 0.01 / 3.5)
   transitions = int(settled[-1, 7]) - int(settled[0, 7])
   required_accel = 9.81 * math.sin(math.atan(grade / 100.0)) + 0.012
   feasible = (A_CRUISE_MIN + GRADE_FEASIBILITY_MARGIN <= required_accel
@@ -147,7 +148,7 @@ def _lead_row(ego, closing, stopped):
   tail_gaps = tail[:, 2 if stopped_case else 3].astype(float)
   tail_span = float(np.ptp(tail_gaps)) if len(tail) else math.inf
   tail_gas_d_p95 = _p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
-  tail_brake_d_p95 = _p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
+  tail_brake_d_p95 = _p95_command_derivative(tail[:, 8], 0.01 / 3.5) if len(tail) else math.inf
   tail_target_error = (float(np.max(np.abs(tail_gaps - TARGET_GAP)))
                        if len(tail) and not stopped_case else 0.0 if len(tail) else math.inf)
   tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
@@ -189,7 +190,7 @@ def _rolling_stop_row(ego):
   settled = data[times >= TOTAL_RUN_DURATION_S - POST_TARGET_SETTLE_S]
   stopped_tail = data[times >= _rolling_lead_stop_time(ego)]
   tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
-  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8])
+  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8], 0.01 / 3.5)
   tail_transitions = int(settled[-1, 11]) - int(settled[0, 11])
   maneuver = data[(times >= LEAD_IN_S + 3.0) & (times <= _rolling_lead_stop_time(ego))]
   maneuver_jerk = np.gradient(maneuver[:, 6].astype(float), 1.0 / 20.0)
@@ -222,7 +223,7 @@ def _lead_speed_deviation_row(ego, lead, seed):
   tail_modes = settled[:, 10]
   peak_speed = float(np.max(data[:, 1].astype(float)))
   tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
-  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8])
+  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8], 0.01 / 3.5)
   tail_transitions = int(settled[-1, 11]) - int(settled[0, 11])
   direct_reversals = _direct_mode_reversals(tail_modes)
   minimum_time_gap = float(np.min(gaps))
@@ -251,7 +252,7 @@ def _far_lead_row(ego):
   settled_gap_span = float(np.ptp(settled[:, 3].astype(float)))
   tail_transitions = int(settled[-1, 11]) - int(settled[0, 11])
   tail_gas_d_p95 = _p95_command_derivative(settled[:, 7])
-  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8])
+  tail_brake_d_p95 = _p95_command_derivative(settled[:, 8], 0.01 / 3.5)
   overshoot = peak_speed - set_speed
   passed = (overshoot <= LEAD_SET_SPEED_OVERSHOOT_MPH
             and final_time_gap < initial_time_gap - 1.0 and settled_gap_error <= 0.25

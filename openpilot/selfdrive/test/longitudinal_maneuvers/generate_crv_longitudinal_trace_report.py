@@ -74,7 +74,7 @@ def _trace(spec):
     return [None if isinstance(x, str) else float(x) for x in value]
   return {"label": label, "time": clean(time), "ego": clean(ego), "lead": clean(lead),
           "target": target, "grade": grade, "gap": clean(gap), "time_gap": clean(time_gap),
-          "accel": clean(accel), "planner_accel": clean(planner_accel), "gas": clean(gas),
+          "accel": clean(accel), "planner_accel": clean(planner_accel), "controller_accel": clean(rows[:, -1]), "gas": clean(gas),
           "jerk": clean(jerk), "planner_jerk": clean(planner_jerk),
           "brake": clean(brake), "brake_request": clean(brake_request),
           "predictive_brake": clean(predictive_brake), "safety": clean(safety), "mode": list(mode),
@@ -108,6 +108,7 @@ function render(){
  add('lead mph',t.lead,colors.lead,'x','y');
  add('target mph',t.time.map(()=>t.target),colors.target,'x','y');
  add('planner m/s²',t.planner_accel,colors.planner,'x2','y2');
+ add('LongControl m/s²',t.controller_accel,'#9467bd','x2','y2');
  add('physical m/s²',t.accel,colors.actual,'x2','y2');
  add('predictive brake m/s²',t.predictive_brake,colors.brake,'x2','y2','dot');
  add('safety override (1=engaged)',t.safety===null?null:t.safety.map(v=>v?1:0),'#000','x2','y3');
@@ -147,6 +148,7 @@ def main():
   OUT.write_text(HTML.replace("__TRACE_DATA__", json.dumps(traces, separators=(",", ":"))))
   OUT_JSON.write_text(json.dumps({"schema_version": 1,
                                   "generated_at": datetime.now(UTC).isoformat(),
+                                  "plant_model": "production LongControl + Honda CarController + decoded CAN + delayed grey-box dynamics",
                                   "traces": traces}, separators=(",", ":")))
   print(f"wrote {OUT} ({len(traces)} traces)")
 

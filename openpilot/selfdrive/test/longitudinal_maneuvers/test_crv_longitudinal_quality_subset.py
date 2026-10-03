@@ -29,7 +29,7 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       settled_error = float(np.max(np.abs(settled[:, 1].astype(float) - target))) if len(settled) else math.inf
       stable = rows[rows[:, 0].astype(float) >= float(rows[-1, 0]) - q.POST_TARGET_SETTLE_S]
       gas_d_p95 = q._p95_command_derivative(stable[:, 3])
-      brake_d_p95 = q._p95_command_derivative(stable[:, 5])
+      brake_d_p95 = q._p95_command_derivative(stable[:, 5], 0.01 / 3.5)
       if (not math.isfinite(crossing) or error > 1.0
           or settled_duration < q.POST_TARGET_SETTLE_S or settled_error > 1.0
           or gas_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX
@@ -53,7 +53,7 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       feasible = (q.A_CRUISE_MIN + q.GRADE_FEASIBILITY_MARGIN <= required_accel
                   <= q.get_max_accel(target * q.MPH) - q.GRADE_FEASIBILITY_MARGIN)
       gas_d_p95 = q._p95_command_derivative(settled[:, 3])
-      brake_d_p95 = q._p95_command_derivative(settled[:, 4])
+      brake_d_p95 = q._p95_command_derivative(settled[:, 4], 0.01 / 3.5)
       transitions = int(settled[-1, 7]) - int(settled[0, 7])
       if ((feasible and (speed_error > 1.0 or gas_span > 0.05 or brake_span > 0.05
                          or gas_d_p95 > q.COMMAND_DERIVATIVE_P95_MAX
@@ -90,7 +90,7 @@ class TestCrvLongitudinalQualitySubset(OpenpilotTestCase):
       tail_gaps = tail[:, 2 if stopped_case else 3].astype(float)
       tail_span = float(np.ptp(tail_gaps)) if len(tail) else math.inf
       tail_gas_d_p95 = q._p95_command_derivative(tail[:, 7]) if len(tail) else math.inf
-      tail_brake_d_p95 = q._p95_command_derivative(tail[:, 8]) if len(tail) else math.inf
+      tail_brake_d_p95 = q._p95_command_derivative(tail[:, 8], 0.01 / 3.5) if len(tail) else math.inf
       tail_transitions = int(tail[-1, 11]) - int(tail[0, 11]) if len(tail) else math.inf
       tail_target_error = (float(np.max(np.abs(tail_gaps - q.TARGET_GAP)))
                            if len(tail) and not stopped_case else 0.0 if len(tail) else math.inf)
