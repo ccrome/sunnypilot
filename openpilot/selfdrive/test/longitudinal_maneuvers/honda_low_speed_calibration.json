@@ -1,0 +1,541 @@
+{
+  "train_routes": [
+    "00000044--7400b9a4b2",
+    "00000041--9f46bca8e3",
+    "0000003a--5fa3fea7bc"
+  ],
+  "validation_routes": [
+    "00000047--dd29f6f277",
+    "0000003b--a28eefbb10"
+  ],
+  "parameters": {
+    "creep_accel": 0.5851,
+    "creep_speed": 1.266,
+    "creep_release_tau": 0.0477,
+    "brake_buildup_tau": 0.2614,
+    "brake_preload": 0.3477,
+    "brake_gain": 1.0341
+  },
+  "wheel_speed_cutoff": 0.5773,
+  "simulation_dynamics": {
+    "gas_gain": 1.604,
+    "gas_tau": 0.5579,
+    "gas_release_tau": 0.1222,
+    "brake_gain": 1.0341,
+    "brake_tau": 0.527,
+    "delay": 0.05,
+    "rolling": 0.1888,
+    "drag": 0.0003693,
+    "speed_sample_period": 0.02,
+    "speed_quantum": 0.0006944444444444445,
+    "speed_noise_std": 0.006,
+    "seed": 0,
+    "creep_accel": 0.5851,
+    "creep_speed": 1.266,
+    "creep_release_tau": 0.0477,
+    "brake_buildup_tau": 0.2614,
+    "brake_preload": 0.3477,
+    "hold_decel": 0.5,
+    "wheel_speed_cutoff": 0.5773,
+    "wheel_speed_spread": 0.012
+  },
+  "fitted_parameters_unrounded": [
+    0.5850596014480439,
+    1.2659627134801503,
+    0.04770605081036571,
+    0.26136991169883145,
+    0.3477361074855436,
+    1.0341303640462682
+  ],
+  "optimizer_success": true,
+  "routes": {
+    "00000044--7400b9a4b2": {
+      "stop_times_s": [
+        217.138412781
+      ],
+      "old": {
+        "stops": 1,
+        "speed_rmse_mps": 0.10963646170130793,
+        "acceleration_rmse_mps2": 0.41461230190361603
+      },
+      "net_brake_cutoff": {
+        "stops": 1,
+        "speed_rmse_mps": 0.09505528917540516,
+        "acceleration_rmse_mps2": 0.19822643606008525
+      },
+      "new": {
+        "stops": 1,
+        "speed_rmse_mps": 0.06942332805873995,
+        "acceleration_rmse_mps2": 0.14353809248636712
+      },
+      "control_speed_scale": 1.028913808667698,
+      "per_stop": [
+        {
+          "time_s": 217.138412781,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.10963646170130793,
+            "acceleration_rmse_mps2": 0.41461230190361603
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.06942332805873995,
+            "acceleration_rmse_mps2": 0.14353809248636712
+          }
+        }
+      ],
+      "higher_speed": {
+        "old": {
+          "stops": 48,
+          "speed_rmse_mps": 0.2679484697240059,
+          "acceleration_rmse_mps2": 0.15277287724699337
+        },
+        "new": {
+          "stops": 48,
+          "speed_rmse_mps": 0.2569189776808443,
+          "acceleration_rmse_mps2": 0.14374034116575263
+        }
+      }
+    },
+    "00000041--9f46bca8e3": {
+      "stop_times_s": [
+        235.98797063100002,
+        465.245053773
+      ],
+      "old": {
+        "stops": 2,
+        "speed_rmse_mps": 0.18396535293242602,
+        "acceleration_rmse_mps2": 0.6578261086582884
+      },
+      "net_brake_cutoff": {
+        "stops": 2,
+        "speed_rmse_mps": 0.2262683715090383,
+        "acceleration_rmse_mps2": 0.9837135676111458
+      },
+      "new": {
+        "stops": 2,
+        "speed_rmse_mps": 0.1981406483685316,
+        "acceleration_rmse_mps2": 0.8041994569346602
+      },
+      "control_speed_scale": 1.0282710999773006,
+      "per_stop": [
+        {
+          "time_s": 235.98797063100002,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.1391125460285359,
+            "acceleration_rmse_mps2": 0.541944295731229
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.1443285725772197,
+            "acceleration_rmse_mps2": 0.6661648583608046
+          }
+        },
+        {
+          "time_s": 465.245053773,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2198504075424074,
+            "acceleration_rmse_mps2": 0.7561526028450836
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.24018471268926836,
+            "acceleration_rmse_mps2": 0.9217906023350063
+          }
+        }
+      ],
+      "higher_speed": {
+        "old": {
+          "stops": 61,
+          "speed_rmse_mps": 0.34982697892222125,
+          "acceleration_rmse_mps2": 0.16682437441307127
+        },
+        "new": {
+          "stops": 61,
+          "speed_rmse_mps": 0.3236953917871261,
+          "acceleration_rmse_mps2": 0.1595176530395377
+        }
+      }
+    },
+    "0000003a--5fa3fea7bc": {
+      "stop_times_s": [
+        289.721384576,
+        403.037498335,
+        435.918433271,
+        443.661990559,
+        1212.106162818,
+        1267.55416311,
+        1311.4533989259999,
+        1393.095667072,
+        1469.558932303,
+        1521.0034656169998
+      ],
+      "old": {
+        "stops": 10,
+        "speed_rmse_mps": 1.225441861352185,
+        "acceleration_rmse_mps2": 0.6699289460725909
+      },
+      "net_brake_cutoff": {
+        "stops": 10,
+        "speed_rmse_mps": 0.3483421457842512,
+        "acceleration_rmse_mps2": 0.7555450732547421
+      },
+      "new": {
+        "stops": 10,
+        "speed_rmse_mps": 0.4382222340759641,
+        "acceleration_rmse_mps2": 0.7522330237751745
+      },
+      "control_speed_scale": 1.0321577267451851,
+      "per_stop": [
+        {
+          "time_s": 289.721384576,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.7225881876025606,
+            "acceleration_rmse_mps2": 0.6260104884467312
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2280647152427404,
+            "acceleration_rmse_mps2": 0.6265233824997534
+          }
+        },
+        {
+          "time_s": 403.037498335,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.182721147143885,
+            "acceleration_rmse_mps2": 0.5947194450098436
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2594932021891869,
+            "acceleration_rmse_mps2": 0.9212965140535274
+          }
+        },
+        {
+          "time_s": 435.918433271,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 2.6212564487253154,
+            "acceleration_rmse_mps2": 0.919628577002562
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.8535624894885264,
+            "acceleration_rmse_mps2": 0.8755432335632807
+          }
+        },
+        {
+          "time_s": 443.661990559,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 2.6212564487253154,
+            "acceleration_rmse_mps2": 0.919628577002562
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.8535624894885264,
+            "acceleration_rmse_mps2": 0.8755432335632807
+          }
+        },
+        {
+          "time_s": 1212.106162818,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2744430100461218,
+            "acceleration_rmse_mps2": 0.6235473772791754
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2576850690505326,
+            "acceleration_rmse_mps2": 0.6629683985546455
+          }
+        },
+        {
+          "time_s": 1267.55416311,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.3499097523209822,
+            "acceleration_rmse_mps2": 0.61928421772042
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2885342561367789,
+            "acceleration_rmse_mps2": 0.8941166710786903
+          }
+        },
+        {
+          "time_s": 1311.4533989259999,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.18670092757683932,
+            "acceleration_rmse_mps2": 0.5740826421268908
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.3133171303610606,
+            "acceleration_rmse_mps2": 0.6683310095532046
+          }
+        },
+        {
+          "time_s": 1393.095667072,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.28943221281776704,
+            "acceleration_rmse_mps2": 0.4921286127857088
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.13598619166900436,
+            "acceleration_rmse_mps2": 0.6131790825211816
+          }
+        },
+        {
+          "time_s": 1469.558932303,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.4169867377186882,
+            "acceleration_rmse_mps2": 0.5592477280743758
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.16805741618429978,
+            "acceleration_rmse_mps2": 0.6438242330126749
+          }
+        },
+        {
+          "time_s": 1521.0034656169998,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.4788779875482044,
+            "acceleration_rmse_mps2": 0.6278458343910694
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.22213150548173968,
+            "acceleration_rmse_mps2": 0.6387004068475182
+          }
+        }
+      ],
+      "higher_speed": {
+        "old": {
+          "stops": 158,
+          "speed_rmse_mps": 0.29629148540496625,
+          "acceleration_rmse_mps2": 0.1601601228098579
+        },
+        "new": {
+          "stops": 158,
+          "speed_rmse_mps": 0.20967538859304524,
+          "acceleration_rmse_mps2": 0.1341694515871643
+        }
+      }
+    },
+    "00000047--dd29f6f277": {
+      "stop_times_s": [
+        162.082184051,
+        274.354864582,
+        572.428773478,
+        728.73786295,
+        1175.2743918419999
+      ],
+      "old": {
+        "stops": 5,
+        "speed_rmse_mps": 0.24249342565367507,
+        "acceleration_rmse_mps2": 0.48614780244542877
+      },
+      "net_brake_cutoff": {
+        "stops": 5,
+        "speed_rmse_mps": 0.22725943118705547,
+        "acceleration_rmse_mps2": 0.6371492233533433
+      },
+      "new": {
+        "stops": 5,
+        "speed_rmse_mps": 0.20139463118167064,
+        "acceleration_rmse_mps2": 0.5925799128944027
+      },
+      "control_speed_scale": 1.0294904524015165,
+      "per_stop": [
+        {
+          "time_s": 162.082184051,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.18580109535543138,
+            "acceleration_rmse_mps2": 0.5857157055404847
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.09282569478054879,
+            "acceleration_rmse_mps2": 0.5423347030550631
+          }
+        },
+        {
+          "time_s": 274.354864582,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.15129350605641984,
+            "acceleration_rmse_mps2": 0.4394759962488432
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.18337456000476063,
+            "acceleration_rmse_mps2": 0.58451914207929
+          }
+        },
+        {
+          "time_s": 572.428773478,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.06543999456695626,
+            "acceleration_rmse_mps2": 0.39450321505405117
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2766981993579569,
+            "acceleration_rmse_mps2": 0.7774892112738755
+          }
+        },
+        {
+          "time_s": 728.73786295,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.10287477584149778,
+            "acceleration_rmse_mps2": 0.4418649330078256
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.045727528961209914,
+            "acceleration_rmse_mps2": 0.24062684455394484
+          }
+        },
+        {
+          "time_s": 1175.2743918419999,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.47089056374362454,
+            "acceleration_rmse_mps2": 0.5427881579464534
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.28618743515874445,
+            "acceleration_rmse_mps2": 0.6764425003409347
+          }
+        }
+      ],
+      "higher_speed": {
+        "old": {
+          "stops": 155,
+          "speed_rmse_mps": 0.301477364265569,
+          "acceleration_rmse_mps2": 0.16420806386389705
+        },
+        "new": {
+          "stops": 155,
+          "speed_rmse_mps": 0.29473583317775526,
+          "acceleration_rmse_mps2": 0.1600575139335235
+        }
+      }
+    },
+    "0000003b--a28eefbb10": {
+      "stop_times_s": [
+        3013.992070308,
+        3087.472659134,
+        3268.141888909
+      ],
+      "old": {
+        "stops": 3,
+        "speed_rmse_mps": 1.03833760315146,
+        "acceleration_rmse_mps2": 0.7376368185263633
+      },
+      "net_brake_cutoff": {
+        "stops": 3,
+        "speed_rmse_mps": 0.5172007892744658,
+        "acceleration_rmse_mps2": 0.7395202770411097
+      },
+      "new": {
+        "stops": 3,
+        "speed_rmse_mps": 0.5119996192843442,
+        "acceleration_rmse_mps2": 0.6865429061143419
+      },
+      "control_speed_scale": 1.032446879316928,
+      "per_stop": [
+        {
+          "time_s": 3013.992070308,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 1.4699719251109264,
+            "acceleration_rmse_mps2": 0.9167126978615999
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.14286749133186713,
+            "acceleration_rmse_mps2": 0.6115094038655225
+          }
+        },
+        {
+          "time_s": 3087.472659134,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.7533347985433264,
+            "acceleration_rmse_mps2": 0.4566761677088544
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.2817987447634906,
+            "acceleration_rmse_mps2": 0.6263254693670915
+          }
+        },
+        {
+          "time_s": 3268.141888909,
+          "old": {
+            "stops": 1,
+            "speed_rmse_mps": 0.7114099767674887,
+            "acceleration_rmse_mps2": 0.7638121074997085
+          },
+          "new": {
+            "stops": 1,
+            "speed_rmse_mps": 0.8286188374712466,
+            "acceleration_rmse_mps2": 0.8048578391330383
+          }
+        }
+      ],
+      "higher_speed": {
+        "old": {
+          "stops": 561,
+          "speed_rmse_mps": 0.3237935462267675,
+          "acceleration_rmse_mps2": 0.14031491171011737
+        },
+        "new": {
+          "stops": 561,
+          "speed_rmse_mps": 0.27044074287754194,
+          "acceleration_rmse_mps2": 0.12535267137653
+        }
+      }
+    }
+  },
+  "legacy_dynamics": {
+    "gas_gain": 1.604,
+    "gas_tau": 0.5579,
+    "gas_release_tau": 0.1222,
+    "brake_gain": 0.925,
+    "brake_tau": 0.527,
+    "delay": 0.05,
+    "rolling": 0.1888,
+    "drag": 0.0003693,
+    "speed_sample_period": 0.02,
+    "speed_quantum": 0.0006944444444444445,
+    "speed_noise_std": 0.006,
+    "seed": 0
+  },
+  "method": "100 Hz causal CAN replay; 10-second free rollout from one measured initial state. First second excluded from scoring; equal route weighting during fitting. Calibration observer omits stochastic noise and fine quantization; runtime plant retains both.",
+  "limitations": [
+    "Wheel/transmission/model speeds are proxies, not independent physical-speed ground truth.",
+    "Latest route excluded from fitting but used earlier to identify the missing phenomena.",
+    "Pose pitch includes body motion and is not independently measured road grade.",
+    "Per-wheel cutoff fitted from training CAN minima; creep/buildup are grey-box terms.",
+    "Hold deceleration and wheel-channel spread are assumed, not independently identified.",
+    "Latest-route stop acceleration error worsens despite improved velocity error.",
+    "Observer spikes at wheel cutoff are not independent measurements of physical jerk."
+  ]
+}

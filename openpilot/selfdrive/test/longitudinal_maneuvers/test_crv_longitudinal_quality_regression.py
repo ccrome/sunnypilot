@@ -28,6 +28,7 @@ SIM_RATE = 20.0
 DT = 1.0 / SIM_RATE
 TARGET_GAP = 2.05
 POST_TARGET_SETTLE_S = 60.0
+TARGET_ATTAINMENT_TOLERANCE_MPH = 0.01
 RUN_DURATION_S = 180.0
 LEAD_IN_S = 15.0
 TOTAL_RUN_DURATION_S = LEAD_IN_S + RUN_DURATION_S
@@ -74,7 +75,7 @@ def _run_speed_transition(start_mph: float, target_mph: float, actuator_paramete
     v_cruise = start_mph * MPH if plant.current_time < LEAD_IN_S else target_mph * MPH
     plant.step(v_cruise=v_cruise)
     if (not crossed and plant.current_time >= LEAD_IN_S
-        and np.sign(target_mph - start_mph) * (plant.speed / MPH - target_mph) >= 0):
+        and np.sign(target_mph - start_mph) * (plant.speed / MPH - target_mph) >= -TARGET_ATTAINMENT_TOLERANCE_MPH):
       crossed = True
       duration = max(duration, plant.current_time + POST_TARGET_SETTLE_S + DT)
     rows.append((plant.current_time, plant.speed / MPH, plant.acceleration,
@@ -86,7 +87,7 @@ def _run_speed_transition(start_mph: float, target_mph: float, actuator_paramete
 
 def _crossing_time(rows: np.ndarray, target_mph: float, start_mph: float) -> float:
   direction = np.sign(target_mph - start_mph)
-  crossed = np.flatnonzero(direction * (rows[:, 1].astype(float) - target_mph) >= 0.0)
+  crossed = np.flatnonzero(direction * (rows[:, 1].astype(float) - target_mph) >= -TARGET_ATTAINMENT_TOLERANCE_MPH)
   return float(rows[crossed[0], 0]) if len(crossed) else math.inf
 
 

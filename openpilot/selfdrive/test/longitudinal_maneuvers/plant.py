@@ -8,7 +8,7 @@ from openpilot.common.realtime import Ratekeeper, DT_MDL
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
-from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
+from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU, RADAR_TO_CAMERA, get_RadarState_from_vision
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
 from opendbc.car.honda.carcontroller import compute_gas_brake
 from opendbc.car.honda.hondacan import crv_brake_handoff, crv_gas_handoff
@@ -146,6 +146,25 @@ class Plant:
       radar.radarState.leadOne = make_lead(lead_one)
     radar.radarState.leadTwo = make_lead(lead_two)
 
+    # Optional vision observations go through the production ego/lead fusion.
+    # True lead motion and range integration remain independent of perception.
+    model_leads = []
+    for name, spec in (("leadOne", lead_one), ("leadTwo", lead_two)):
+      spec = spec or {}
+      observation = log.ModelDataV2.LeadDataV3.new_message()
+      observation.prob = float(spec.get('prob', prob_lead))
+      observation.t = ModelConstants.LEAD_T_IDXS
+      observation.x = spec.get('model_lead_future_x', [float(spec.get('d_rel', d_rel)) + RADAR_TO_CAMERA] * 6)
+      observation.y = [0.] * 6
+      observation.v = spec.get('model_lead_future', [float(spec.get('model_lead_speed', spec.get('v_lead', v_lead)))] * 6)
+      observation.vStd = [float(spec.get('model_speed_std', 0.0))] * 6
+      observation.a = [float(spec.get('a_lead', a_lead))] * 6
+      model_leads.append(observation)
+      if 'model_ego_speed' in spec:
+        radar.radarState.__setattr__(name, get_RadarState_from_vision(
+          observation, self.vehicle.measured_speed, float(spec['model_ego_speed']), observation.prob))
+    model.modelV2.leadsV3 = model_leads
+
     # Simulate model predicting slightly faster speed
     # this is to ensure lead policy is effective when model
     # does not predict slowdown in e2e mode
@@ -171,6 +190,12 @@ class Plant:
     car_state.carState.vEgo = float(self.vehicle.measured_speed if self.full_system else self.speed)
     car_state.carState.aEgo = float(self.vehicle.measured_acceleration if self.full_system else self.acceleration)
     car_state.carState.standstill = bool(self.speed < 0.01)
+    car_state.carState.vEgoStd = float(self.vehicle.measured_speed_std if self.full_system else 0.0)
+    car_state.carState.aEgoStd = float(self.vehicle.measured_acceleration_std if self.full_system else 0.0)
+    car_state.carState.vEgoMeasurementValid = bool(self.vehicle.speed_measurement_valid if self.full_system else True)
+    car_state.carState.vEgoWheelCount = int(self.vehicle.wheel_count if self.full_system else 4)
+    car_state.carState.vEgoDropoutTime = float(self.vehicle.speed_dropout_time if self.full_system else 0.0)
+    car_state.carState.vehicleSensorsInvalid = bool(self.vehicle.vehicle_sensors_invalid if self.full_system else False)
     car_state.carState.vCruise = float(v_cruise * 3.6)
     car_control.carControl.orientationNED = [0., float(pitch), 0.]
 
@@ -191,7 +216,9 @@ class Plant:
     self.safety_override = bool(getattr(self.planner, "crv_lead_follow_safety_override", False))
     if self.full_system:
       self.speed, self.acceleration = self.vehicle.step(
-        self.planner_acceleration, self.planner.output_should_stop, self.enabled, pitch, self.ts, v_cruise)
+        self.planner_acceleration, self.planner.output_should_stop, self.enabled, pitch, self.ts, v_cruise,
+        getattr(self.planner, 'crv_stop_phase', 0), getattr(self.planner, 'crv_stop_reference', (0., 0., 0.)),
+        getattr(self.planner, 'crv_lead_follow_urgency', 0.))
       command_accel, gas, self.brake_request = self.vehicle.command
       self.gas_command = gas / 1600.0
       self.brake_intensity = max(0.0, -command_accel / abs(ACCEL_MIN)) if self.brake_request else 0.0

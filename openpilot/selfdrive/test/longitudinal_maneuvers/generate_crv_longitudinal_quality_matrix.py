@@ -28,6 +28,7 @@ from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quali
   LEAD_IN_S,
   LEAD_SET_SPEED_OVERSHOOT_MPH,
   POST_TARGET_SETTLE_S,
+  TARGET_ATTAINMENT_TOLERANCE_MPH,
   ROLLING_LEAD_MAX_JERK_MPS3,
   ROLLING_LEAD_P95_JERK_MPS3,
   TARGET_GAP,
@@ -77,9 +78,8 @@ def row(kind, case, passed, metrics, data, target):
   signals["observed_speed_mph"] = [float(value) for value in sample[:, -3]]
   signals["observed_acceleration_mps2"] = [float(value) for value in sample[:, -2]]
   signals["target_speed_mph"] = [float(target)] * len(sample)
-  times = np.asarray(signals["time_s"])
-  accel = np.asarray(signals["acceleration_mps2"])
-  signals["jerk_mps3"] = np.gradient(accel, times).tolist()
+  acceleration_index = indices['acceleration_mps2']
+  signals["jerk_mps3"] = np.gradient(data[:, acceleration_index].astype(float), data[:, 0].astype(float))[::10].tolist()
   return {"kind": kind, "case": case, "passed": passed, "metrics": metrics, "signals": signals}
 
 
@@ -299,7 +299,7 @@ def _multiphase_stop_row(ego, pulse_amplitude=0.22):
   return result
 
 
-def run_matrix():
+def run_matrix(workers=32):
   jobs = []
   for target in (15, 25, 35, 45, 55, 65, 75, 85, 90):
     jobs.append((_speed_row, (0, target)))
@@ -324,7 +324,7 @@ def run_matrix():
   for pulse_amplitude in (0.0, 0.16, 0.30):
     jobs.append((_multiphase_stop_row, (50, pulse_amplitude)))
 
-  with ProcessPoolExecutor(max_workers=32) as executor:
+  with ProcessPoolExecutor(max_workers=workers) as executor:
     return list(executor.map(_run_job, jobs))
 
 
@@ -335,19 +335,25 @@ def _run_job(job):
 
 def _crossing(data, target, start):
   direction = np.sign(target - start)
-  crossed = np.flatnonzero(direction * (data[:, 1].astype(float) - target) >= 0.0)
+  crossed = np.flatnonzero(direction * (data[:, 1].astype(float) - target) >= -TARGET_ATTAINMENT_TOLERANCE_MPH)
   return float(data[crossed[0], 0]) if len(crossed) else math.inf
 
 
-def write_report(rows):
+def source_metadata():
   root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
   paths = {"planner_sha256": "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
            "inner_sha256": "openpilot/selfdrive/controls/lib/longcontrol.py",
            "plant_sha256": "openpilot/selfdrive/test/longitudinal_maneuvers/honda_vehicle.py",
-           "carstate_sha256": "opendbc_repo/opendbc/car/honda/carstate.py"}
-  metadata = {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+           "carstate_sha256": "opendbc_repo/opendbc/car/honda/carstate.py",
+           "terminal_stop_sha256": "openpilot/selfdrive/controls/lib/terminal_stop.py",
+           "stop_cases_sha256": "openpilot/selfdrive/test/longitudinal_maneuvers/test_crv_multiphase_braking.py"}
+  return {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dynamics": asdict(HondaDynamics()),
               **{k: hashlib.sha256((root / p).read_bytes()).hexdigest() for k, p in paths.items()}}
+
+
+def write_report(rows, metadata=None):
+  metadata = source_metadata() if metadata is None else metadata
   passed = sum(r["passed"] for r in rows)
   failed = len(rows) - passed
   body = []
@@ -386,4 +392,7 @@ planner SHA-256 {metadata['planner_sha256']}. Includes the calibrated actuator a
 
 
 if __name__ == "__main__":
-  write_report(run_matrix())
+  metadata = source_metadata()
+  results = run_matrix()
+  metadata['source_changed_during_run'] = metadata != source_metadata()
+  write_report(results, metadata)

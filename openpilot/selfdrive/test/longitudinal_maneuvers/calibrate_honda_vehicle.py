@@ -9,6 +9,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor
 import json
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pandas as pd
@@ -30,7 +31,9 @@ K = get_kalman_gain(DT, A, np.array([[1., 0.]]), np.diag([0., 100.]), 0.3).ravel
 def extract_segment(spec):
   path, custom = spec
   parser = CANParser(DBC[CAR.HONDA_CRV_5G][Bus.pt], [("ACC_CONTROL", 0)], 1)
-  rows = {"state": [], "command": [], "orientation": []}
+  speed_parser = CANParser(DBC[CAR.HONDA_CRV_5G][Bus.pt], [("WHEEL_SPEEDS", 0), ("ENGINE_DATA", 0)], 1)
+  sensor_messages_seen = set()
+  rows = {"state": [], "command": [], "orientation": [], "sensors": []}
   for m in LogReader(str(path), only_union_types=True):
     service = m.which()
     t = m.logMonoTime / 1e9
@@ -43,11 +46,21 @@ def extract_segment(spec):
     elif service == "carControl":
       pitch = m.carControl.orientationNED
       rows["orientation"].append((t, float(pitch[1]) if len(pitch) == 3 else 0.))
-    elif service in ("can", "sendcan") and ((service == "sendcan") == custom):
+    elif service in ("can", "sendcan"):
+      if service == "can":
+        speed_frames = [(c.address, bytes(c.dat), c.src) for c in m.can if c.address in (344, 464)]
+        updated = speed_parser.update([(m.logMonoTime, speed_frames)]) if speed_frames else []
+        sensor_messages_seen.update(updated)
+        if updated and {344, 464} <= sensor_messages_seen:
+          wheels = speed_parser.vl["WHEEL_SPEEDS"]
+          speeds = [wheels["WHEEL_SPEED_" + s] / 3.6 for s in ("FL", "FR", "RL", "RR")]
+          rows["sensors"].append((t, sum(speeds) / 4., speed_parser.vl["ENGINE_DATA"]["XMISSION_SPEED"] / 3.6, *speeds))
+      if (service == "sendcan") != custom:
+        continue
       frames = [(c.address, bytes(c.dat), c.src) for c in getattr(m, service) if c.address == 0x1df]
       if frames and 0x1df in parser.update([(m.logMonoTime, frames)]):
         c = parser.vl["ACC_CONTROL"]
-        rows["command"].append((t, c["ACCEL_COMMAND"], max(0., c["GAS_COMMAND"]), c["BRAKE_REQUEST"], c["CONTROL_ON"]))
+        rows["command"].append((t, c["ACCEL_COMMAND"], max(0., c["GAS_COMMAND"]), c["BRAKE_REQUEST"], c["CONTROL_ON"], c["STANDSTILL"]))
   return rows
 
 
@@ -58,18 +71,26 @@ def extract_route(route, log_root, out, workers, refresh=False):
   files = sorted(log_root.glob(f"{route}--*/rlog.zst"), key=lambda p: int(p.parent.name.rsplit("--", 1)[1]))
   if not files:
     raise FileNotFoundError(route)
+  incomplete = [p for p in files if subprocess.run(["zstd", "-t", str(p)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode]
+  files = [p for p in files if p not in incomplete]
+  if not files:
+    raise ValueError(f"No complete rlogs for {route}; incomplete files preserved")
   custom = next(bool(m.carParams.openpilotLongitudinalControl) for m in LogReader(str(files[0]), only_union_types=True)
                 if m.which() == "carParams")
   with ProcessPoolExecutor(max_workers=workers) as pool:
     parts = list(pool.map(extract_segment, [(p, custom) for p in files]))
   names = {"state": ["t", "raw", "speed", "acceleration", "gas_pressed", "brake_pressed", "enabled"],
-           "command": ["t", "accel", "gas", "braking", "on"], "orientation": ["t", "pitch"]}
+           "command": ["t", "accel", "gas", "braking", "on", "hold"], "orientation": ["t", "pitch"],
+           "sensors": ["t", "wheel", "transmission", "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr"]}
   frames = {k: pd.DataFrame([row for part in parts for row in part[k]], columns=v).sort_values("t")
             for k, v in names.items()}
   d = frames["state"].drop_duplicates("t")
-  for k in ("command", "orientation"):
+  for k in ("command", "orientation", "sensors"):
     d = pd.merge_asof(d, frames[k], on="t", direction="backward", tolerance=0.15)
   d.to_parquet(path, index=False)
+  (out / f"{route}.inventory.json").write_text(json.dumps({"route": route, "custom_longitudinal": custom,
+      "complete_segments": [p.parent.name for p in files], "incomplete_preserved": [p.parent.name for p in incomplete]}, indent=2))
   return d
 
 
