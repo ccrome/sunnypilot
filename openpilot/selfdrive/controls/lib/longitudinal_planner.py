@@ -429,17 +429,21 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     lead_follow_active = self.is_crv_5g and bool(tracked_leads) and not is_e2e
     if lead_follow_active:
       closest_lead = min(tracked_leads, key=lambda lead: lead.dRel)
+      # A forward lead cannot travel backwards. In particular, the vision
+      # velocity estimate inherits ego-speed observer innovations at a stop;
+      # negative estimates are uncertainty, not additional closing momentum.
+      lead_speed = max(0.0, closest_lead.vLead)
       t_follow = get_T_FOLLOW(sm['selfdriveState'].personality)
-      lead_velocity_accel = (closest_lead.vLead - self.crv_lead_follow_speed) / self.dt
-      self.crv_lead_follow_speed = closest_lead.vLead
+      lead_velocity_accel = (lead_speed - self.crv_lead_follow_speed) / self.dt
+      self.crv_lead_follow_speed = lead_speed
       self.crv_lead_follow_gap = closest_lead.dRel
       self.crv_lead_follow_time_gap = self.crv_lead_follow_gap / max(v_ego, 1.0)
       self.crv_lead_follow_time_error = self.crv_lead_follow_time_gap - t_follow
-      closing_speed = max(v_ego - closest_lead.vLead, 0.0)
+      closing_speed = max(v_ego - lead_speed, 0.0)
       self.crv_follow_duration = 0.0
       # The following reference must agree with the existing stop decision:
       # do not keep closing toward 2 m after the stop path takes over at 3 m.
-      desired_lead_gap = max(STOPPED_LEAD_DISTANCE, closest_lead.vLead * t_follow)
+      desired_lead_gap = max(STOPPED_LEAD_DISTANCE, lead_speed * t_follow)
       excess_gap = closest_lead.dRel - desired_lead_gap
       # Couple gap and closing speed through the continuously recomputed
       # critically damped intercept response.
@@ -448,7 +452,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       follow_frequency = math.sqrt(CRV_FOLLOW_GAP_GAIN) \
         + 0.5 * closing_speed * intercept_authority / max(excess_gap, 2.0)
       lead_follow_accel = (follow_frequency ** 2 * excess_gap
-                           + 2.0 * follow_frequency * (closest_lead.vLead - v_ego)
+                           + 2.0 * follow_frequency * (lead_speed - v_ego)
                            - 0.4 * a_prev)
       lead_response_time = action_t + CRV_BRAKE_RESPONSE_TIME + 2.0 / CRV_ACCEL_EMERGENCY_RESPONSE_WN
       braking_pressure = float(np.clip(-lead_follow_accel / abs(ACCEL_MIN), 0.0, 1.0))
@@ -461,7 +465,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       max_brake_decel = abs(ACCEL_MIN) * CRV_BRAKE_EFFORT_GAIN
       _, _, required_clearance = closing_braking_reachability(
         closing_speed, sm['carState'].aEgo, lead_response_time,
-        max_decel=max_brake_decel, lead_speed=closest_lead.vLead)
+        max_decel=max_brake_decel, lead_speed=lead_speed)
       lead_accel = float(np.clip(closest_lead.aLeadK, -2.0, 2.0))
       lead_accel_confidence = float(np.clip(
         lead_velocity_accel * lead_accel / (lead_accel ** 2 + 0.01 ** 2), 0.0, 1.0))
@@ -622,13 +626,20 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       # One acceleration/jerk state for cruise and following. Snap bounds the
       # start and end of ordinary maneuvers without filtering measured state.
       # Emergency pressure opens the envelope instead of delaying hard brakes.
+      # Arbitrate safety at the reference, BEFORE advancing the trajectory.
+      # Blending the state toward full brake afterwards bypasses jerk/snap
+      # limits and recursively compounds even a small pressure on each tick.
+      output_a_target += response_pressure * (ACCEL_MIN - output_a_target)
       self.output_a_target, self.crv_accel_jerk = update_accel_scurve(
         output_a_target, a_prev, self.crv_accel_jerk, self.dt, jerk_limit,
         CRV_ACCEL_RESPONSE_WN + response_pressure *
         (CRV_ACCEL_EMERGENCY_RESPONSE_WN - CRV_ACCEL_RESPONSE_WN),
         CRV_ACCEL_MAX_SNAP + response_pressure *
         (CRV_ACCEL_EMERGENCY_MAX_SNAP - CRV_ACCEL_MAX_SNAP))
-      self.output_a_target += self.crv_lead_follow_urgency * (ACCEL_MIN - self.output_a_target)
+      # Full emergency authority is immediate; partial pressure never edits
+      # the trajectory state after integration. Its buildup is accounted for
+      # by the response envelope above.
+      self.output_a_target += float(emergency_response) * (ACCEL_MIN - self.output_a_target)
 
     # The restart-gap hold is a safety state, not a soft target.  Keep the
     # jerk trajectory continuous, but do not allow its stored momentum to

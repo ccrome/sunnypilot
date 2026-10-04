@@ -16,6 +16,9 @@ import subprocess
 import numpy as np
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.honda_vehicle import HondaDynamics
+from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_multiphase_braking import (
+  run_multiphase_stop, stop_failures, stop_metrics,
+)
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_longitudinal_quality_regression import (
   A_CRUISE_MIN,
@@ -275,6 +278,27 @@ def _far_lead_row(ego):
               "gas_derivative_p95": tail_gas_d_p95, "brake_derivative_p95": tail_brake_d_p95}, data, set_speed)
 
 
+def _multiphase_stop_row(ego, pulse_amplitude=0.22):
+  data = run_multiphase_stop(ego, pulse_amplitude=pulse_amplitude)
+  metrics = stop_metrics(data)
+  metrics["failures"] = stop_failures(metrics)
+  # Preserve 20 Hz for these short sensor-triggered events; 2 Hz sampling
+  # would hide the exact command spike the new regression reproduces.
+  result = row("Multiphase braking", f"{ego} mph / rolling stop / {pulse_amplitude:.2f} m/s raw-speed excursion",
+               not metrics["failures"], metrics, data, ego)
+  indices = {"time_s": 0, "ego_speed_mph": 1, "gap_m": 2, "time_gap_s": 3,
+             "acceleration_mps2": 4, "lead_speed_mph": 5, "planner_acceleration_mps2": 6,
+             "gas_command": 7, "brake_intensity": 8, "brake_request": 9,
+             "actuator_mode": 10, "mode_transitions": 11, "predictive_brake_mps2": 12,
+             "safety_override": 13, "observed_speed_mph": 14, "observed_acceleration_mps2": 15,
+             "controller_acceleration_mps2": 16}
+  result["signals"] = {name: data[:, index].astype(str if name == "actuator_mode" else float).tolist()
+                       for name, index in indices.items()}
+  result["signals"]["target_speed_mph"] = [ego] * len(data)
+  result["signals"]["jerk_mps3"] = np.gradient(data[:, 4].astype(float), data[:, 0].astype(float)).tolist()
+  return result
+
+
 def run_matrix():
   jobs = []
   for target in (15, 25, 35, 45, 55, 65, 75, 85, 90):
@@ -295,6 +319,10 @@ def run_matrix():
     jobs.append((_lead_speed_deviation_row, case))
   for ego in (25, 45, 65):
     jobs.append((_far_lead_row, (ego,)))
+  for ego in (25, 35, 50):
+    jobs.append((_multiphase_stop_row, (ego,)))
+  for pulse_amplitude in (0.0, 0.16, 0.30):
+    jobs.append((_multiphase_stop_row, (50, pulse_amplitude)))
 
   with ProcessPoolExecutor(max_workers=32) as executor:
     return list(executor.map(_run_job, jobs))
@@ -315,7 +343,8 @@ def write_report(rows):
   root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
   paths = {"planner_sha256": "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
            "inner_sha256": "openpilot/selfdrive/controls/lib/longcontrol.py",
-           "plant_sha256": "openpilot/selfdrive/test/longitudinal_maneuvers/honda_vehicle.py"}
+           "plant_sha256": "openpilot/selfdrive/test/longitudinal_maneuvers/honda_vehicle.py",
+           "carstate_sha256": "opendbc_repo/opendbc/car/honda/carstate.py"}
   metadata = {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "dynamics": asdict(HondaDynamics()),
               **{k: hashlib.sha256((root / p).read_bytes()).hexdigest() for k, p in paths.items()}}

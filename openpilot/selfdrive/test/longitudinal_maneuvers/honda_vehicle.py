@@ -52,6 +52,7 @@ class HondaVehicle:
     self.measured_speed = float(speed)
     self.measured_acceleration = 0.0
     self.raw_speed = float(speed)
+    self.transmission_speed_error = lambda: 0.0
     self.random = np.random.default_rng(self.parameters.seed)
     self.sensor_ticks = round(self.parameters.speed_sample_period / DT_CTRL)
     if self.sensor_ticks < 1 or abs(self.sensor_ticks * DT_CTRL - self.parameters.speed_sample_period) > 1e-8:
@@ -115,4 +116,8 @@ class HondaVehicle:
     if self.frame % self.sensor_ticks == 0:
       noise = self.random.normal(0., p.speed_noise_std) * (self.speed > 0.)
       self.raw_speed = max(0., round((self.speed + noise) / p.speed_quantum) * p.speed_quantum)
-    self.measured_speed, self.measured_acceleration = self.sensor.update_speed_kf(self.raw_speed)
+    # Exercise production sensor fusion, not just its downstream KF. A
+    # transmission-speed excursion is not a physical wheel-speed excursion.
+    transmission = (self.raw_speed + self.transmission_speed_error()) / self.sensor.CP.wheelSpeedFactor
+    observed_speed = self.sensor.get_raw_speed(self.raw_speed, transmission)
+    self.measured_speed, self.measured_acceleration = self.sensor.update_speed_kf(observed_speed)

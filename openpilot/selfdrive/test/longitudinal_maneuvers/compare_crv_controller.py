@@ -6,6 +6,7 @@ law. Other production modules must match the baseline before comparison.
 Actuator variants are uncertainty probes, not claims of calibrated hardware.
 """
 import argparse
+import ast
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -19,14 +20,18 @@ import numpy as np
 from openpilot.selfdrive.test.longitudinal_maneuvers.honda_vehicle import HondaDynamics
 
 
-# Immutable source baseline corresponding to installer revision ddb4774.
-BASELINE = "d907af5b275f2650641152a44172d6728f1392d6"
+# Immutable source baseline corresponding to installer revision c4a5f9231,
+# the controller used on the Oct. 3 drive exhibiting multiphase braking.
+BASELINE = "6eaa6aa7ae284b9c832083fa04a5b1f20f06be3e"
 PLANNER = "openpilot/selfdrive/controls/lib/longitudinal_planner.py"
 INNER = "openpilot/selfdrive/controls/lib/longcontrol.py"
+CARSTATE = "opendbc/car/honda/carstate.py"
+BASELINE_OPENDBC = "706f4c173eea9b3695fb03cfd67f8f927fa7c4c3"
 CASES = [("speed", 0, 15), ("speed", 90, 15),
          ("lead", 25, 10, False), ("lead", 45, 20, False), ("lead", 65, 10, False),
          ("lead", 25, 20, False), ("lead", 45, 40, False), ("lead", 25, 25, True),
-         ("rolling", 35), ("rolling", 50), ("deviation", 45, 35, 1), ("far", 45)]
+         ("rolling", 35), ("rolling", 50), ("deviation", 45, 35, 1), ("far", 45),
+         ("multiphase", 25), ("multiphase", 35), ("multiphase", 50)]
 DYNAMICS = {"nominal": HondaDynamics(),
             "slower": HondaDynamics(delay=0.8, gas_tau=1.5, brake_tau=0.7),
             "faster": HondaDynamics(delay=0.1, gas_tau=0.7, brake_tau=0.3),
@@ -34,6 +39,37 @@ DYNAMICS = {"nominal": HondaDynamics(),
                                            delay=.2, speed_noise_std=.01, seed=1),
             "high_authority": HondaDynamics(gas_gain=1.9, brake_gain=1.1, gas_tau=.4, gas_release_tau=.08,
                                             speed_noise_std=.01, seed=2)}
+
+
+def _sensor_fusion(variant):
+  """Extract the actual Git-baseline sensor expression, not an approximation."""
+  source = (subprocess.check_output(["git", "-C", "opendbc_repo", "show", f"{BASELINE_OPENDBC}:{CARSTATE}"])
+            if variant == "installed" else Path("opendbc_repo", CARSTATE).read_bytes())
+  cls = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef) and n.name == "CarState")
+  if variant == "candidate":
+    function = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "get_raw_speed")
+  else:
+    update = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "update")
+    names = {"v_weight_v", "v_weight_bp", "v_weight", "unscaled_v_ego"}
+    body = [n for n in update.body if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)
+            and n.targets[0].id in names]
+    assert len(body) == 4, "Installed fusion changed; review the immutable baseline extraction"
+
+    class TransmissionInput(ast.NodeTransformer):
+      def visit_Subscript(self, node):
+        if ast.unparse(node) == "cp.vl['ENGINE_DATA']['XMISSION_SPEED']":
+          return ast.BinOp(left=ast.Name(id="v_transmission", ctx=ast.Load()), op=ast.Div(),
+                           right=ast.Attribute(value=ast.Name(id="CV", ctx=ast.Load()), attr="KPH_TO_MS", ctx=ast.Load()))
+        return self.generic_visit(node)
+
+    body = [TransmissionInput().visit(n) for n in body]
+    function = ast.parse("def get_raw_speed(self, v_wheel, v_transmission):\n  pass\n").body[0]
+    function.body = body + [ast.Return(value=ast.Name(id="unscaled_v_ego", ctx=ast.Load()))]
+  from opendbc.car.honda.values import CAR
+  from openpilot.common.constants import CV
+  namespace = {"np": np, "CAR": CAR, "CV": CV}
+  exec(compile(ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])), CARSTATE, "exec"), namespace)
+  return namespace["get_raw_speed"]
 
 
 def _run(spec):
@@ -52,13 +88,15 @@ def _run(spec):
   exec(compile(source, inner.__file__, "exec"), inner.__dict__)
   from openpilot.selfdrive.test.longitudinal_maneuvers import honda_vehicle
   honda_vehicle.LongControl = inner.LongControl
+  honda_vehicle.CarState.get_raw_speed = _sensor_fusion(variant)
   from openpilot.selfdrive.test.longitudinal_maneuvers import plant, test_crv_longitudinal_quality_regression as q
   plant.LongitudinalPlanner = planner.LongitudinalPlanner
   p = DYNAMICS[response]
   kind, *args = case
+  from openpilot.selfdrive.test.longitudinal_maneuvers.test_crv_multiphase_braking import run_multiphase_stop, stop_metrics
   runners = {"speed": q._run_speed_transition, "lead": q._run_lead_case,
              "rolling": q._run_rolling_lead_stop_case, "deviation": q._run_lead_speed_deviation_case,
-             "far": q._run_far_lead_case}
+             "far": q._run_far_lead_case, "multiphase": run_multiphase_stop}
   rows = runners[kind](*args, actuator_parameters=p)
   speed_case = kind == "speed"
   t = rows[:, 0].astype(float)
@@ -77,6 +115,8 @@ def _run(spec):
              "gas_variation": float(np.sum(np.abs(np.diff(gas[active])))),
              "brake_variation": float(np.sum(np.abs(np.diff(brake[active])))),
              "tail_gas_span": float(np.ptp(gas[tail])), "tail_brake_span": float(np.ptp(brake[tail]))}
+  if kind == "multiphase":
+    metrics.update(stop_metrics(rows))
   if not speed_case:
     gap = rows[:, 2].astype(float)
     lead = rows[:, 5].astype(float)
@@ -113,11 +153,12 @@ def main():
   parser.add_argument("--output", type=Path, required=True)
   parser.add_argument("--workers", type=int, default=32)
   parser.add_argument("--responses", nargs="+", choices=list(DYNAMICS), default=list(DYNAMICS))
-  parser.add_argument("--case-kind", choices=["speed", "lead", "rolling", "deviation", "far"])
+  parser.add_argument("--case-kind", choices=["speed", "lead", "rolling", "deviation", "far", "multiphase"])
   args = parser.parse_args()
   # Replay the immutable planner + inner loop. Honda CAN must remain identical.
-  tracked = ["opendbc_repo"]
-  subprocess.run(["git", "diff", "--exit-code", BASELINE, "--", *tracked], check=True)
+  # Only sensor fusion is allowed to differ; CAN generation remains identical.
+  subprocess.run(["git", "-C", "opendbc_repo", "diff", "--exit-code", BASELINE_OPENDBC, "--", ".",
+                  ":(exclude)opendbc/car/honda/carstate.py", ":(exclude)opendbc/car/honda/tests/test_speed_fusion.py"], check=True)
   import openpilot.selfdrive.controls.lib.longitudinal_planner as planner
   import openpilot.selfdrive.controls.lib.longcontrol as inner
   current_source = Path(planner.__file__).read_bytes()
@@ -129,6 +170,8 @@ def main():
   data = {"schema_version": 1, "generated_at": datetime.now(UTC).isoformat(), "baseline_commit": BASELINE,
           "candidate_planner_sha256": hashlib.sha256(current_source).hexdigest(),
           "candidate_inner_sha256": hashlib.sha256(Path(inner.__file__).read_bytes()).hexdigest(),
+          "baseline_opendbc_commit": BASELINE_OPENDBC,
+          "candidate_carstate_sha256": hashlib.sha256(Path("opendbc_repo", CARSTATE).read_bytes()).hexdigest(),
           "dynamics": {k: asdict(v) for k, v in DYNAMICS.items()},
           "results": [{k: v for k, v in r.items() if k != "trace"} for r in results],
           "traces": [r["trace"] for r in results]}
