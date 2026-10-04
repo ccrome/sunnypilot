@@ -16,7 +16,8 @@ from openpilot.common.test import OpenpilotTestCase
 from openpilot.selfdrive.test.longitudinal_maneuvers.plant import Plant
 
 
-SIMULATION_DURATION = 70.0
+LEAD_IN_S = 15.0
+SIMULATION_DURATION = LEAD_IN_S + 70.0
 INITIAL_GAP = 80.0
 LEAD_PROBABILITY = 1.0
 GRADE_3_PERCENT = math.atan(0.03)
@@ -33,11 +34,14 @@ MIN_SETTLED_GAP = 5.0
 # The lead-speed schedule has two gentle slowdown/recovery cycles.  The
 # intervals below exclude the intentional lead transitions and keep only the
 # settled portions for the acceptance metrics.
-SETTLED_LEAD_INTERVALS = ((7.0, 10.0), (20.0, 25.0), (35.0, 40.0),
-                          (50.0, 55.0), (65.0, 70.0))
+SETTLED_LEAD_INTERVALS = tuple(
+  (start + LEAD_IN_S, end + LEAD_IN_S)
+  for start, end in ((7.0, 10.0), (20.0, 25.0), (35.0, 40.0),
+                     (50.0, 55.0), (65.0, 70.0)))
 
 
 def lead_speed_schedule(base_speed: float, time_s: float) -> float:
+  time_s = max(0.0, time_s - LEAD_IN_S)
   if time_s < 10.0:
     return base_speed
   if time_s < 15.0:
@@ -58,6 +62,7 @@ def lead_speed_schedule(base_speed: float, time_s: float) -> float:
 
 
 def rolling_grade(time_s: float) -> float:
+  time_s = max(0.0, time_s - LEAD_IN_S)
   if time_s < 15.0 or time_s >= 45.0:
     return 0.0
   if time_s < 25.0:
@@ -76,6 +81,7 @@ def settled_samples(rows: np.ndarray, grade_profile: str) -> np.ndarray:
   # grade cases have no transition to exclude.
   if grade_profile == "rolling":
     for transition in (15.0, 25.0, 35.0, 45.0):
+      transition += LEAD_IN_S
       mask &= np.abs(rows[:, 0] - transition) > 5.0
   return rows[mask]
 

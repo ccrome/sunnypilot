@@ -100,6 +100,12 @@ TASK.md
 CLAUDE.md
 SKILL.md
 
+# Generated paired controller traces and offline identification JIT caches.
+openpilot/selfdrive/test/longitudinal_maneuvers/crv_controller_comparison.html
+openpilot/selfdrive/test/longitudinal_maneuvers/crv_controller_comparison_results.json
+*.nbc
+*.nbi
+
 ### JetBrains ###
 !.idea/customTargets.xml
 !.idea/tools/*
