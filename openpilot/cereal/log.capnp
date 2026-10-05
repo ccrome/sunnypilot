@@ -877,6 +877,28 @@ struct ControlsState @0x97ff69c53601abf1 {
   curvature @37 :Float32;  # path curvature from vehicle model
   desiredCurvature @61 :Float32;  # lag adjusted curvatures used by lateral controllers
   forceDecel @51 :Bool;
+  longitudinalDebug @67 :LongitudinalDebug;
+
+  struct LongitudinalDebug {
+    active @0 :Bool;
+    terminalStop @1 :Bool;
+    accelerationError @2 :Float32; # m/s², after measurement confidence
+    speedConfidence @3 :Float32;
+    targetAcceleration @4 :Float32; # m/s²
+    targetJerk @5 :Float32; # m/s³
+    safetyPressure @6 :Float32;
+    brakeGain @7 :Float32;
+    positiveEffortLimit @8 :Float32;
+    negativeEffortLimit @9 :Float32;
+    outputBeforeSafety @10 :Float32; # acceleration command, m/s²
+    outputAfterSafety @11 :Float32; # before final actuator-limit clipping
+    outputAcceleration @12 :Float32; # final command, m/s²
+    feedforward @13 :Float32;
+    integral @14 :Float32;
+    proportional @15 :Float32;
+    pidEffort @16 :Float32;
+    pidUpdated @17 :Bool; # false in off/holding; PID terms may be retained
+  }
 
   lateralControlState :union {
     pidState @53 :LateralPIDState;
@@ -1237,6 +1259,53 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   shouldStop @37: Bool;
   allowThrottle @38: Bool;
   allowBrake @39: Bool;
+  crvStopPhase @40 :CrvStopPhase;
+  crvSafetyPressure @41 :Float32;
+  crvRequiredClearance @42 :Float32;
+  crvDebug @43 :CrvDebug;
+
+  struct CrvDebug {
+    leadActive @0 :Bool;
+    stationaryLead @1 :Bool;
+    movingLead @2 :Bool;
+    stoppingForecast @3 :Bool;
+    leadRemainingTravel @4 :Float32; # m
+    leadGap @5 :Float32; # m
+    leadSpeed @6 :Float32; # m/s
+    wheelSpeedCensored @7 :Bool;
+    safetyEgoSpeed @8 :Float32; # m/s
+    safetyClosingSpeed @9 :Float32; # m/s
+    safetyAcceleration @10 :Float32; # m/s² input to reachability
+    delayedClosingSpeed @11 :Float32; # m/s after response interval
+    responseTime @12 :Float32; # seconds
+    cruiseAcceleration @13 :Float32; # m/s²
+    followAcceleration @14 :Float32; # m/s², before terminal/safety arbitration
+    targetBeforeSafety @15 :Float32; # m/s², before safety/S-curve
+    accelerationJerk @16 :Float32; # m/s³, actual planner trajectory state
+    stopReferenceSpeed @17 :Float32; # m/s
+    stopReferenceAcceleration @18 :Float32; # m/s²
+    stopReferenceJerk @19 :Float32; # m/s³
+    stopConfirmation @20 :Float32; # seconds
+    stopDuration @21 :Float32; # seconds, local reference horizon
+    stopElapsed @22 :Float32; # seconds
+    leadLossHoldRemaining @23 :Float32; # seconds
+    restartGapHold @24 :Bool;
+    wheelChannelCount @25 :UInt8;
+    speedStd @26 :Float32; # m/s
+    accelerationStd @27 :Float32; # m/s²
+    safetySpeedMargin @28 :Float32; # m/s, two-sigma allowance during dropout
+    leadStop @29 :Bool;
+    closeClosingStop @30 :Bool;
+    stoppedCloseLead @31 :Bool;
+    stoppedLeadLossHold @32 :Bool;
+    candidateStop @33 :Bool;
+  }
+
+  enum CrvStopPhase {
+    inactive @0;
+    braking @1;
+    holding @2;
+  }
 
 
   solverExecutionTime @35 :Float32;

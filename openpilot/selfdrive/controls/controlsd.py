@@ -122,6 +122,7 @@ class Controls(ControlsExt):
 
     actuators = CC.actuators
     actuators.longControlState = self.LoC.long_control_state
+    actuators.crvStopActive = long_plan.crvStopPhase.raw != 0
 
     # Enable blinkers while lane changing
     if model_v2.meta.laneChangeState != LaneChangeState.off:
@@ -135,7 +136,11 @@ class Controls(ControlsExt):
 
     # accel PID loop
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, self.CP_SP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
-    actuators.accel = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits))
+    actuators.accel = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits,
+                                          stop_phase=long_plan.crvStopPhase.raw,
+                                          v_target=long_plan.speeds[0] if len(long_plan.speeds) else CS.vEgo,
+                                          j_target=long_plan.jerks[0] if len(long_plan.jerks) else 0.,
+                                          safety_pressure=long_plan.crvSafetyPressure))
 
     # Steering PID loop and lateral MPC
     # Reset desired curvature to current to avoid violating the limits on engage
@@ -219,6 +224,7 @@ class Controls(ControlsExt):
     cs.upAccelCmd = float(self.LoC.pid.p)
     cs.uiAccelCmd = float(self.LoC.pid.i)
     cs.ufAccelCmd = float(self.LoC.pid.f)
+    self.LoC.write_debug(cs.init('longitudinalDebug'))
     cs.forceDecel = bool(self.sm['driverMonitoringState'].noResponseForceDecel or
                          (self.sm['selfdriveState'].state == State.softDisabling))
 

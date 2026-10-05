@@ -9,6 +9,10 @@ from openpilot.common.test import OpenpilotTestCase
 from openpilot.selfdrive.test.longitudinal_maneuvers.plant import Plant
 
 
+LEAD_IN_S = 15.0
+SIMULATION_DURATION_S = LEAD_IN_S + 45.0
+
+
 def run_ablation(candidate_mode: str, initial_speed: float = 29.0) -> np.ndarray:
   plant = Plant(
     lead_relevancy=True,
@@ -18,9 +22,10 @@ def run_ablation(candidate_mode: str, initial_speed: float = 29.0) -> np.ndarray
     car_fingerprint=CAR.HONDA_CRV_5G,
   )
   rows = []
-  while plant.current_time < 45.0:
+  while plant.current_time < SIMULATION_DURATION_S:
     t = plant.current_time
-    v_lead = initial_speed if t < 12.0 else initial_speed - 1.5 if t < 22.0 else initial_speed
+    maneuver_t = max(0.0, t - LEAD_IN_S)
+    v_lead = initial_speed if maneuver_t < 12.0 else initial_speed - 1.5 if maneuver_t < 22.0 else initial_speed
     lead = {"v_lead": v_lead, "d_rel": plant.distance_lead - plant.distance,
             "v_rel": v_lead - plant.speed, "prob": 1.0, "present": True}
     lead_one = dict(lead)
@@ -29,13 +34,13 @@ def run_ablation(candidate_mode: str, initial_speed: float = 29.0) -> np.ndarray
     if candidate_mode == "noisy_candidates":
       # Keep the physical lead unchanged while alternating the competing
       # candidate obstacle estimates. This isolates source arbitration.
-      phase = int(t / 1.0) % 2
+      phase = int(maneuver_t / 1.0) % 2
       lead_one["d_rel"] += 8.0 if phase else 0.0
       lead_two["d_rel"] += 8.0 if not phase else 0.0
     elif candidate_mode == "small_noise":
       # Near-tied candidates should not make the MPC switch sources every
       # cycle. This is the deterministic regression for source hysteresis.
-      phase = int(t / 1.0) % 2
+      phase = int(maneuver_t / 1.0) % 2
       lead_one["d_rel"] += 0.25 if phase else 0.0
       lead_two["d_rel"] += 0.25 if not phase else 0.0
     elif candidate_mode == "fixed_lead_one":
