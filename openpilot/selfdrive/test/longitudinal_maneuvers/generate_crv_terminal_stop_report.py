@@ -39,7 +39,7 @@ def installed_baseline():
 
 def run_case(case):
   data = run_terminal_stop(*case)
-  metrics = terminal_metrics(data, case[-1])
+  metrics = terminal_metrics(data, case[-1], case[1])
   failures = terminal_failures(metrics, case[-1])
   result = row('Terminal stop', str(case), not failures, {**metrics, 'failures': failures}, data, case[0])
   result['signals']['stop_phase'] = data[::10, 14].astype(int).tolist()

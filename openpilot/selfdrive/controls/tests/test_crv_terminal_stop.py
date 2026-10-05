@@ -6,6 +6,7 @@ import pytest
 
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
+from opendbc.car.honda.hondacan import CRV_BRAKE_RELEASE_ACCEL
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl, LongCtrlState
 from openpilot.selfdrive.controls.lib.terminal_stop import TerminalStop, vision_motion_confidence
 
@@ -58,7 +59,7 @@ def test_terminal_release_of_pressure_never_opens_gas_or_resets_integral():
                           cruiseState=SimpleNamespace(standstill=False))
   for _ in range(100):
     output = controller.update(True, state, -.1, False, (-3.5, 2.), stop_phase=1, v_target=.5, j_target=1.)
-    assert output < 0.
+    assert 0. < output < CRV_BRAKE_RELEASE_ACCEL
     assert controller.pid.i == .15
   assert controller.long_control_state == LongCtrlState.pid  # Wheel dropout is not a physical hold.
 

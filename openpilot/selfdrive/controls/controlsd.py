@@ -122,6 +122,7 @@ class Controls(ControlsExt):
 
     actuators = CC.actuators
     actuators.longControlState = self.LoC.long_control_state
+    actuators.crvStopActive = long_plan.crvStopPhase.raw != 0
 
     # Enable blinkers while lane changing
     if model_v2.meta.laneChangeState != LaneChangeState.off:

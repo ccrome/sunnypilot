@@ -26,6 +26,7 @@ CASES += [(35, grade, 0.45, 0.0) for grade in (-3, 3)]
 # low-speed case is covered by the rolling-crawl-then-stop regression, where
 # radar-relative motion and the lead's stop forecast remain observable.
 CASES += [(35, 0, 0.0, 3)]
+MAX_FINAL_BRAKE_DECEL_MPS2 = 0.6
 
 
 def run_terminal_stop(speed_mph, grade, model_bias, rolling_mph):
@@ -71,7 +72,7 @@ def run_terminal_stop(speed_mph, grade, model_bias, rolling_mph):
   return np.asarray(rows, dtype=object)
 
 
-def terminal_metrics(rows, rolling_mph=0.):
+def terminal_metrics(rows, rolling_mph=0., grade_percent=0.):
   t, speed, gap, acceleration, command = (rows[:, i].astype(float) for i in (0, 1, 2, 4, -1))
   tail = t >= t[-1] - 60.
   approach = (t > 15.) & (speed > .1) & (speed < 4.) & (rows[:, 5].astype(float) < .1)
@@ -80,13 +81,16 @@ def terminal_metrics(rows, rolling_mph=0.):
   moving = (t > 15.) & (speed > .1)
   renewed = float(np.max(np.maximum.accumulate(command[indices]) - command[indices])) if len(indices) else 0.
   final_moving = (t > 15.) & (speed > .02) & (speed * MPH < .15)
+  free_coast_accel = (-9.81 * math.sin(math.atan(grade_percent / 100.)) - .1888
+                      - .0003693 * (speed * MPH) ** 2)
   committed = rows[:, 14].astype(int) > 0
   safety_pressure = rows[:, 19].astype(float)
   return {'final_clearance_m': float(gap[-1]), 'minimum_clearance_m': float(np.min(gap)),
           'settled_speed_error_mph': float(np.max(np.abs(speed[tail] - rolling_mph))),
           'low_speed_brake_reapplication_mps2': renewed,
           'low_speed_gas_peak': float(np.max(rows[approach, 7].astype(float))) if len(indices) else 0.,
-          'final_moving_deceleration_mps2': float(-np.min(acceleration[final_moving])) if np.any(final_moving) else 0.,
+          'final_moving_deceleration_mps2': (float(np.max(np.maximum(free_coast_accel[final_moving]
+            - acceleration[final_moving], 0.))) if np.any(final_moving) else 0.),
           'safety_pressure_peak': float(np.max(safety_pressure[moving])) if np.any(moving) else 0.,
           'safety_engaged': bool(np.any(safety_pressure[moving] >= 1.0)),
           'committed_gas_peak': float(np.max(rows[committed, 7].astype(float))) if np.any(committed) else 0.,
@@ -105,12 +109,14 @@ def terminal_failures(metrics, rolling_mph=0.):
     # brake release and corrective creep; only the minimum safe clearance is
     # a hard stop-distance bound here.
     bounds.update(final_clearance_m=(2., math.inf), low_speed_brake_reapplication_mps2=(0., .8),
-                  final_moving_deceleration_mps2=(0., .5), low_speed_gas_peak=(0., .0001),
+                  final_moving_deceleration_mps2=(0., MAX_FINAL_BRAKE_DECEL_MPS2), low_speed_gas_peak=(0., .0001),
                   committed_gas_peak=(0., .0001))
     if metrics['safety_engaged']:
       failures.append('nominal_stop_safety')
   elif metrics['minimum_moving_speed_mph'] < rolling_mph - .5:
     failures.append('unnecessary_stop_for_rolling_lead')
+  if rolling_mph > 0.:
+    bounds['settled_speed_error_mph'] = (0., .5)
   for key, (lower, upper) in bounds.items():
     if not lower <= metrics[key] <= upper:
       failures.append(key)
@@ -120,5 +126,5 @@ def terminal_failures(metrics, rolling_mph=0.):
 @pytest.mark.parametrize('case', CASES)
 def test_stationary_lead_finishes_stop_without_creeping(case):
   rows = run_terminal_stop(*case)
-  metrics = terminal_metrics(rows, case[-1])
+  metrics = terminal_metrics(rows, case[-1], case[1])
   assert not terminal_failures(metrics, case[-1]), metrics

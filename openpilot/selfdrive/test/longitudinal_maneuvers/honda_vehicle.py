@@ -106,6 +106,7 @@ class HondaVehicle:
       cc.longActive = enabled
       cc.actuators.accel = self.output
       cc.actuators.longControlState = self.longitudinal.long_control_state
+      cc.actuators.crvStopActive = stop_phase != 0
       cc.orientationNED = [0.0, float(pitch), 0.0]
       cc.hudControl.setSpeed = float(cruise)
       cs = SimpleNamespace(out=state, v_cruise_factor=1.0, is_metric=True,

@@ -117,10 +117,12 @@ def stop_metrics(rows):
 
 
 def stop_failures(metrics):
+  # The 3.75 m standstill reference may finish up to 1 m farther away; a
+  # modest early stop is preferable to releasing the brake and creeping in.
   bounds = {"minimum_clearance": (2.0, math.inf),
             "low_speed_brake_reapplication": (0.0, 0.8),
             "low_speed_peak_deceleration": (0.0, 2.0),
-            "final_speed": (0.0, 0.1), "final_clearance": (2.0, 4.5),
+            "final_speed": (0.0, 0.1), "final_clearance": (2.0, 4.75),
             "settled_gas_span": (0.0, 0.05), "settled_brake_span": (0.0, 0.05)}
   return [key for key, (lower, upper) in bounds.items() if not lower <= metrics[key] < upper]
 

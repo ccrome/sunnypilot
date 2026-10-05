@@ -44,6 +44,14 @@ def test_downhill_can_hold_brake_with_a_positive_acceleration_request():
   assert v.brake_effort < 0.0
 
 
+def test_committed_stop_keeps_brake_requested_while_easing_pressure():
+  v = vehicle(HondaDynamics(speed_noise_std=0.0))
+  v.step(0.04, False, True, 0.0, 0.1, 10.0, stop_phase=1)
+  assert v.command[0] > 0.0
+  assert v.command[1] == 0.0
+  assert v.command[2]
+
+
 def test_downhill_brake_request_can_ease_pressure_without_releasing_mode():
   level = vehicle(HondaDynamics(speed_noise_std=0.0))
   eased = vehicle(HondaDynamics(speed_noise_std=0.0))

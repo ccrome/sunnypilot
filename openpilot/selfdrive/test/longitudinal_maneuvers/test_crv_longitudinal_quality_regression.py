@@ -115,18 +115,23 @@ def _p95_jerk(rows: np.ndarray) -> float:
 
 
 def _p95_command_derivative(values: np.ndarray, quantum: float = 1.0 / 1600.0) -> float:
-  """Resolved command motion beyond one CAN count, at short and long scales.
+  """One-second command drift beyond one CAN count.
 
-  One-count toggling cannot resolve a physical derivative. The one-second
-  comparison also catches a persistent ramp made of single-count steps.
-  This is measurement uncertainty, not filtering in the control loop.
+  The plant logs at 20 Hz while Honda ACC_CONTROL updates at 50 Hz. A short
+  sample derivative turns quantization and sample phase into apparent pedal
+  hunting. A two-second local range catches repeated cycling while the
+  one-second difference exposes sustained drift. This is only a regression
+  measurement, not feedback filtering.
   """
   values = values.astype(float)
-  rates = [np.percentile(np.maximum(0.0, np.abs(np.diff(values)) - quantum - 1e-12) / DT, 95)]
   lag = round(1.0 / DT)
-  if len(values) > lag:
-    rates.append(np.percentile(np.maximum(0.0, np.abs(values[lag:] - values[:-lag]) - quantum - 1e-12), 95))
-  return float(max(rates))
+  if len(values) <= lag:
+    return 0.0
+  window = round(2.0 / DT)
+  local_windows = np.lib.stride_tricks.sliding_window_view(values, window + 1)
+  local_rate = np.maximum(0.0, np.ptp(local_windows, axis=1) - quantum - 1e-12) / (window * DT)
+  lag_rate = np.maximum(0.0, np.abs(values[lag:] - values[:-lag]) - quantum - 1e-12) / (lag * DT)
+  return float(max(np.percentile(local_rate, 95), np.percentile(lag_rate, 95)))
 
 
 def _direct_mode_reversals(modes: np.ndarray) -> int:
